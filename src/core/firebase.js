@@ -28,7 +28,7 @@ import {
 
 const app = initializeApp({
   apiKey:            "AIzaSyD2SXwreze3cSWF7bDz3WF-qsilxqmVZH0",
-  authDomain:        "junklisting-aa1db.firebaseapp.com",
+  authDomain:        "junklisting.netlify.app",
   projectId:         "junklisting-aa1db",
   storageBucket:     "junklisting-aa1db.firebasestorage.app",
   messagingSenderId: "752336005616",
