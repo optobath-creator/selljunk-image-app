@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>JunkLister</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div id="authScreen" class="auth">
+    <div class="auth__logo">Junk<span>Lister</span></div>
+    <div class="auth__tag">snap · sort · sell</div>
+    <div class="auth__card">
+      <div class="auth__hint">Sign in to access your listings</div>
+      <button class="btn btn--google" id="googleSignInBtn" type="button">Continue with Google</button>
+      <div class="auth__err" id="authErr"></div>
+    </div>
+  </div>
+
+  <div id="app" class="app" aria-hidden="true">
+    <header class="topbar">
+      <div class="topbar__logo">Junk<span>Lister</span></div>
+      <div class="topbar__right">
+        <img class="topbar__avatar" id="userAvatar" alt="" />
+        <button class="btn btn--ghost" id="signOutBtn" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload images">
+        <div class="dropzone__inner">
+          <div class="dropzone__title">Drag and drop images here or click to upload</div>
+          <div class="dropzone__sub">Up to 50 images at a time</div>
+        </div>
+        <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      </section>
+
+      <section class="progress" id="globalProgress" aria-hidden="true">
+        <div class="progress__row">
+          <div class="progress__label" id="progressLabel">Images remaining</div>
+          <div class="progress__count" id="progressCount">0</div>
+        </div>
+        <div class="progress__bar"><div class="progress__fill" id="progressFill"></div></div>
+      </section>
+
+      <section class="actions">
+        <button class="btn btn--ghost" id="selectAllBtn" type="button" disabled>Select All</button>
+        <button class="btn btn--danger" id="deleteBtn" type="button" disabled>Delete</button>
+        <button class="btn btn--primary" id="analyzeBtn" type="button" disabled>Analyze</button>
+      </section>
+
+      <section class="cards" id="cards"></section>
+      <section class="empty" id="emptyState">
+        <div class="empty__title">No groups yet</div>
+        <div class="empty__sub">Upload photos to start.</div>
+      </section>
+    </main>
+  </div>
+
+  <div id="groupOverlay" class="overlay" aria-hidden="true">
+    <div class="sheet">
+      <header class="sheet__top">
+        <button class="btn btn--ghost" id="closeGroupBtn" type="button">Close</button>
+        <div class="sheet__title" id="groupTitle">Group</div>
+      </header>
+
+      <section class="actions actions--sheet">
+        <button class="btn btn--ghost" id="groupSelectAllBtn" type="button" disabled>Select All</button>
+        <button class="btn btn--danger" id="groupDeleteBtn" type="button" disabled>Delete</button>
+        <button class="btn btn--primary" id="groupAnalyzeBtn" type="button" disabled>Analyze</button>
+        <button class="btn btn--ghost" id="groupSplitBtn" type="button" disabled>Split</button>
+      </section>
+
+      <section class="analysis" id="analysisPanel" aria-hidden="true">
+        <div class="analysis__title" id="analysisTitle"></div>
+        <div class="analysis__meta" id="analysisMeta"></div>
+        <div class="analysis__desc" id="analysisDesc"></div>
+      </section>
+
+      <section class="grid" id="groupGrid"></section>
+      <section class="hint">Tip: tap to select images. Long‑press any image to download all images in this group.</section>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" aria-live="polite"></div>
+
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>
+
