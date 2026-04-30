@@ -4,20 +4,6 @@
 [build.environment]
   NODE_VERSION = "18"
 
-# Proxy Firebase Auth handler through the app's own domain so Safari
-# doesn't treat auth tokens as third-party (fixes CORS/ITP issues).
-[[redirects]]
-  from = "/__/auth/*"
-  to = "https://junklisting-aa1db.firebaseapp.com/__/auth/:splat"
-  status = 200
-  force = true
-
-# Allow the Firebase Auth iframe to be embedded by the app itself.
-[[headers]]
-  for = "/__/auth/*"
-  [headers.values]
-    X-Frame-Options = "SAMEORIGIN"
-
 [[headers]]
   for = "/*"
   [headers.values]
