@@ -1,13 +1,12 @@
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
 import {
   getAuth,
   signInWithPopup,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+} from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js';
 import {
-  getFirestore,
   initializeFirestore,
   collection,
   doc,
@@ -18,14 +17,14 @@ import {
   orderBy,
   writeBatch,
   getDoc,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+} from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
 import {
   getStorage,
   ref as sRef,
   uploadBytes,
   deleteObject,
   getBlob,
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js';
+} from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-storage.js';
 
 const app = initializeApp({
   apiKey:            "AIzaSyD2SXwreze3cSWF7bDz3WF-qsilxqmVZH0",
