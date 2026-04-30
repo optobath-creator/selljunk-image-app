@@ -8,7 +8,6 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js';
 import {
   initializeFirestore,
-  terminate,
   collection,
   doc,
   setDoc,
@@ -44,9 +43,6 @@ export const provider = new GoogleAuthProvider();
 export const db = initializeFirestore(app, {
   experimentalAutoDetectLongPolling: true,
 });
-// Terminate Firestore cleanly on page unload so Safari doesn't report
-// cancelled in-flight connections as CORS errors.
-window.addEventListener('beforeunload', () => terminate(db));
 export const storage = getStorage(app, "gs://junklisting-aa1db.firebasestorage.app");
 
 export const fb = {
