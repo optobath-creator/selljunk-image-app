@@ -12,6 +12,12 @@
   status = 200
   force = true
 
+# Allow the Firebase Auth iframe to be embedded by the app itself.
+[[headers]]
+  for = "/__/auth/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+
 [[headers]]
   for = "/*"
   [headers.values]
