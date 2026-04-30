@@ -8,6 +8,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js';
 import {
   initializeFirestore,
+  terminate,
   collection,
   doc,
   setDoc,
@@ -37,12 +38,15 @@ const app = initializeApp({
 
 export const auth = getAuth(app);
 export const provider = new GoogleAuthProvider();
-// Safari/WebKit can block Firestore streaming channels with CORS-ish errors.
-// Force long-polling + disable fetch streams for compatibility.
+// Let the SDK auto-detect the best transport for the browser.
+// Safari blocks forced XHR long-polling with CORS errors, so we rely on
+// v12's default auto-detection which picks a Safari-safe transport.
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
-  useFetchStreams: false,
+  experimentalAutoDetectLongPolling: true,
 });
+// Terminate Firestore cleanly on page unload so Safari doesn't report
+// cancelled in-flight connections as CORS errors.
+window.addEventListener('beforeunload', () => terminate(db));
 export const storage = getStorage(app, "gs://junklisting-aa1db.firebasestorage.app");
 
 export const fb = {
