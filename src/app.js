@@ -174,6 +174,7 @@ function openGroup(id) {
   openGroupId = id;
   selectedImageIds.clear();
   renderSheet({ group: g, selectedImageIds });
+  updateSheetActions();
 }
 
 function doCloseSheet() {

@@ -162,9 +162,9 @@ export class JobQueue {
         try {
           const heroImgs = set.slice(0, 3);
           const heroB64 = await Promise.all(heroImgs.map(async img => {
-            const blob = await fb.getBlob(fb.sRef(storage, img.thumbPath));
+            const blob = await fb.getBlob(fb.sRef(storage, img.storagePath));
             const file = new File([blob], 'h.jpg', { type: blob.type || 'image/jpeg' });
-            const dataUrl = await fileToJpegDataUrl(file, 512, 0.65);
+            const dataUrl = await fileToJpegDataUrl(file, 768, 0.65);
             return dataUrl.split(',')[1];
           }));
           const resp = await fetch('/.netlify/functions/analyze', {
