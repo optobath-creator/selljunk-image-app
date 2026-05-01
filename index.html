@@ -1,94 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>JunkLister</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/src/styles.css" />
+  <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
+
+  <!-- Auth -->
   <div id="authScreen" class="auth">
-    <div class="auth__logo">Junk<span>Lister</span></div>
-    <div class="auth__tag">snap · sort · sell</div>
-    <div class="auth__card">
-      <div class="auth__hint">Sign in to access your listings</div>
-      <button class="btn btn--google" id="googleSignInBtn" type="button">Continue with Google</button>
-      <div class="auth__err" id="authErr"></div>
-    </div>
+    <div class="auth-logo">Junk<span>Lister</span></div>
+    <p class="auth-tagline">snap · sort · sell</p>
+    <button id="googleSignInBtn" class="btn-signin" type="button">Continue with Google</button>
+    <p id="authErr" class="auth-error"></p>
   </div>
 
-  <div id="app" class="app" aria-hidden="true">
-    <header class="topbar">
-      <div class="topbar__logo">Junk<span>Lister</span></div>
-      <div class="topbar__right">
-        <img class="topbar__avatar" id="userAvatar" alt="" />
-        <button class="btn btn--ghost" id="signOutBtn" type="button">Sign out</button>
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <header class="header">
+      <span class="header-logo">Junk<span>Lister</span></span>
+      <div class="header-right">
+        <img id="userAvatar" class="avatar" alt="" hidden>
+        <button id="signOutBtn" class="btn-text" type="button">Sign Out</button>
       </div>
     </header>
 
-    <main class="main">
-      <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload images">
-        <div class="dropzone__inner">
-          <div class="dropzone__title">Drag and drop images here or click to upload</div>
-          <div class="dropzone__sub">Up to 50 images at a time</div>
-        </div>
-        <input type="file" id="fileInput" accept="image/*" multiple hidden />
-      </section>
+    <div id="dropzone" class="upload" tabindex="0" role="button" aria-label="Upload images">
+      <span class="upload-icon">+</span>
+      <span class="upload-text">Add Photos</span>
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
+    </div>
 
-      <section class="progress" id="globalProgress" aria-hidden="true">
-        <div class="progress__row">
-          <div class="progress__label" id="progressLabel">Images remaining</div>
-          <div class="progress__count" id="progressCount">0</div>
-        </div>
-        <div class="progress__bar"><div class="progress__fill" id="progressFill"></div></div>
-      </section>
+    <div id="progressBar" class="progress" hidden>
+      <div id="progressFill" class="progress-fill"></div>
+    </div>
 
-      <section class="actions">
-        <button class="btn btn--ghost" id="selectAllBtn" type="button" disabled>Select All</button>
-        <button class="btn btn--danger" id="deleteBtn" type="button" disabled>Delete</button>
-        <button class="btn btn--primary" id="analyzeBtn" type="button" disabled>Analyze</button>
-      </section>
+    <div id="actionBar" class="action-bar" hidden>
+      <button id="deselectBtn" class="btn-action" type="button">Cancel</button>
+      <button id="mergeBtn" class="btn-action btn-gold" type="button">Merge</button>
+      <button id="deleteBtn" class="btn-action btn-danger" type="button">Delete</button>
+    </div>
 
-      <section class="cards" id="cards"></section>
-      <section class="empty" id="emptyState">
-        <div class="empty__title">No groups yet</div>
-        <div class="empty__sub">Upload photos to start.</div>
-      </section>
-    </main>
-  </div>
+    <div id="listings" class="listings"></div>
 
-  <div id="groupOverlay" class="overlay" aria-hidden="true">
-    <div class="sheet">
-      <header class="sheet__top">
-        <button class="btn btn--ghost" id="closeGroupBtn" type="button">Close</button>
-        <div class="sheet__title" id="groupTitle">Group</div>
-      </header>
-
-      <section class="actions actions--sheet">
-        <button class="btn btn--ghost" id="groupSelectAllBtn" type="button" disabled>Select All</button>
-        <button class="btn btn--danger" id="groupDeleteBtn" type="button" disabled>Delete</button>
-        <button class="btn btn--primary" id="groupAnalyzeBtn" type="button" disabled>Analyze</button>
-        <button class="btn btn--ghost" id="groupSplitBtn" type="button" disabled>Split</button>
-      </section>
-
-      <section class="analysis" id="analysisPanel" aria-hidden="true">
-        <div class="analysis__title" id="analysisTitle"></div>
-        <div class="analysis__meta" id="analysisMeta"></div>
-        <div class="analysis__desc" id="analysisDesc"></div>
-      </section>
-
-      <section class="grid" id="groupGrid"></section>
-      <section class="hint">Tip: tap to select images. Long‑press any image to download all images in this group.</section>
+    <div id="emptyState" class="empty">
+      <p class="empty-title">No listings yet</p>
+      <p class="empty-sub">Upload photos to get started</p>
     </div>
   </div>
 
-  <div class="toast" id="toast" aria-live="polite"></div>
+  <!-- Detail sheet -->
+  <div id="sheet" class="sheet-overlay" hidden>
+    <div class="sheet-backdrop"></div>
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <header class="sheet-header">
+        <button id="sheetClose" class="btn-text" type="button">Done</button>
+        <span class="sheet-title" id="sheetTitle">Listing</span>
+        <button id="sheetDownloadAll" class="btn-text" type="button">Save All</button>
+      </header>
+
+      <div id="sheetImages" class="sheet-images"></div>
+
+      <div id="sheetAnalysis" class="sheet-analysis" hidden>
+        <input id="sheetTitleInput" class="sheet-input sheet-input-title" placeholder="Title" autocomplete="off">
+        <div class="sheet-row">
+          <input id="sheetPrice" class="sheet-input sheet-input-price" placeholder="$" type="number" min="0">
+          <span id="sheetCategory" class="sheet-badge"></span>
+        </div>
+        <textarea id="sheetDesc" class="sheet-input sheet-input-desc" placeholder="Description" rows="3"></textarea>
+      </div>
+
+      <div class="sheet-actions">
+        <button id="sheetRemoveBtn" class="btn-action" type="button" hidden>Remove Selected</button>
+        <button id="sheetReanalyze" class="btn-action btn-gold" type="button">Re-analyze</button>
+        <button id="sheetDeleteGroup" class="btn-action btn-danger" type="button">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
 
   <script type="module" src="/src/app.js"></script>
 </body>
 </html>
-

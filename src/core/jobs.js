@@ -1,7 +1,8 @@
 import { fb, storage, db } from './firebase.js';
 import { toast } from './toast.js';
-import { ensureIdToken, fileToJpegDataUrl, dataUrlToBlob, computeDhashFromFile, yieldToUI } from './image.js';
-import { groupHybrid, extractUncertainPairs, applyBoundarySplits } from './grouping.js';
+import { ensureIdToken, fileToJpegDataUrl, dataUrlToBlob, yieldToUI } from './image.js';
+import { extractExifTimestamp } from './exif.js';
+import { groupByTime } from './grouping.js';
 
 export class JobQueue {
   constructor({ onProgress }) {
@@ -10,37 +11,39 @@ export class JobQueue {
     this.total = 0;
   }
 
-  _setProgress(pending, total) {
+  _tick(pending, total) {
     this.pending = pending;
     this.total = total;
     this.onProgress({ pending, total });
   }
 
-  async uploadAndGroup({ uid, files }) {
-    const picked = files.slice(0, 50);
-    if (files.length > 50) toast('Only first 50 images were added', true);
+  async uploadAndProcess({ uid, files }) {
+    const picked = files.slice(0, 100);
+    if (files.length > 100) toast('Only first 100 images were added', true);
 
     await ensureIdToken();
+    const steps = picked.length * 3; // preprocess + upload + finalize
+    let done = 0;
+    this._tick(steps, steps);
 
-    // Preprocess (thumb+full + hash). We treat each image as 1 "remaining" unit.
-    this._setProgress(picked.length, picked.length);
-
+    // 1. Preprocess: EXIF + compress
     const prepared = [];
     for (let i = 0; i < picked.length; i++) {
       const f = picked[i];
-      const capturedAt = f.lastModified || Date.now();
-      const [fullDataUrl, thumbDataUrl, hash] = await Promise.all([
+      const [exifTs, fullDataUrl, thumbDataUrl] = await Promise.all([
+        extractExifTimestamp(f),
         fileToJpegDataUrl(f, 1600, 0.82),
         fileToJpegDataUrl(f, 320, 0.70),
-        computeDhashFromFile(f),
       ]);
-      prepared.push({ file: f, capturedAt, fullDataUrl, thumbDataUrl, hash, filename: f.name });
-      if ((i + 1) % 2 === 0) await yieldToUI();
+      const capturedAt = exifTs || f.lastModified || Date.now();
+      prepared.push({ file: f, capturedAt, fullDataUrl, thumbDataUrl, filename: f.name });
+      done++;
+      this._tick(steps - done, steps);
+      if ((i + 1) % 3 === 0) await yieldToUI();
     }
 
-    // Upload concurrency (small to keep UI responsive on mobile)
+    // 2. Upload to Storage (4 concurrent)
     const uploaded = [];
-    const concurrency = 3;
     let idx = 0;
     const worker = async () => {
       while (idx < prepared.length) {
@@ -58,56 +61,70 @@ export class JobQueue {
           storagePath: fullPath,
           thumbPath,
           filename: cur.filename,
-          hash: cur.hash,
         });
-        this._setProgress(Math.max(0, this.pending - 1), this.total);
+        done++;
+        this._tick(steps - done, steps);
         await yieldToUI();
       }
     };
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    await Promise.all(Array.from({ length: 4 }, () => worker()));
 
-    // Group (free pass)
+    // 3. Group by EXIF timestamp
     uploaded.sort((a, b) => a.capturedAt - b.capturedAt);
-    const initialGroups = groupHybrid(uploaded);
+    const groups = groupByTime(uploaded, 15000);
 
-    // AI assist only on uncertain boundaries
-    const uncertainPairs = extractUncertainPairs(initialGroups, 30);
-    const splitAfter = new Set(); // imgId after which we split
-    for (let i = 0; i < uncertainPairs.length; i++) {
-      const p = uncertainPairs[i];
-      const a = uploaded.find(x => x.imgId === p.a);
-      const b = uploaded.find(x => x.imgId === p.b);
-      if (!a || !b) continue;
+    // 4. AI sort-check — verify first vs last image in each group (parallel, 3 at a time)
+    const verifiedGroups = [];
+    const checkQueue = groups.map((g, i) => ({ group: g, index: i }));
+    const checkWorker = async () => {
+      while (checkQueue.length) {
+        const item = checkQueue.shift();
+        if (!item) break;
+        const g = item.group;
+        if (g.length <= 1) {
+          verifiedGroups.push(g);
+          continue;
+        }
+        // Send first and last thumbnails for AI check
+        const first = g[0];
+        const last = g[g.length - 1];
+        try {
+          const [b1, b2] = await Promise.all([first, last].map(async img => {
+            const blob = await fb.getBlob(fb.sRef(storage, img.thumbPath));
+            const file = new File([blob], 't.jpg', { type: blob.type || 'image/jpeg' });
+            const dataUrl = await fileToJpegDataUrl(file, 384, 0.55);
+            return dataUrl.split(',')[1];
+          }));
+          const resp = await fetch('/.netlify/functions/sort-check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image1: b1, image2: b2 }),
+          });
+          const out = await resp.json().catch(() => ({}));
+          if (out.same === false && g.length > 2) {
+            // Split: try midpoint
+            const mid = Math.ceil(g.length / 2);
+            verifiedGroups.push(g.slice(0, mid));
+            verifiedGroups.push(g.slice(mid));
+          } else {
+            verifiedGroups.push(g);
+          }
+        } catch {
+          verifiedGroups.push(g); // fail open
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, () => checkWorker()));
 
-      // Use cheap compare (small) to decide if same object
-      const [ab, bb] = await Promise.all([a, b].map(async img => {
-        // We already have thumb uploaded; reuse local thumbDataUrl if possible would be better, but we didn't retain it.
-        // Downloading thumb here is still authenticated and small; only done for uncertain pairs.
-        const blob = await fb.getBlob(fb.sRef(storage, img.thumbPath));
-        const file = new File([blob], 't.jpg', { type: blob.type || 'image/jpeg' });
-        const dataUrl = await fileToJpegDataUrl(file, 384, 0.55);
-        return dataUrl.split(',')[1];
-      }));
-
-      const resp = await fetch('/.netlify/functions/sort-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image1: ab, image2: bb }),
-      });
-      const out = await resp.json().catch(() => ({}));
-      if (!out.same) splitAfter.add(p.a);
-      await yieldToUI();
-    }
-
-    const finalGroups = splitAfter.size
-      ? applyBoundarySplits(uploaded, splitAfter)
-      : initialGroups;
-
-    // Persist groups (only paths + metadata; no download URLs)
+    // 5. Write groups to Firestore + auto-trigger analysis
     const batch = fb.writeBatch(db);
     const now = Date.now();
-    finalGroups.forEach((set, gi) => {
+    const groupIds = [];
+
+    for (let gi = 0; gi < verifiedGroups.length; gi++) {
+      const set = verifiedGroups[gi];
       const groupId = 'grp_' + now + '_' + gi + '_' + Math.random().toString(36).slice(2, 7);
+      groupIds.push(groupId);
       const imageIds = set.map(x => x.imgId);
       const heroImageIds = imageIds.slice(0, 3);
       const images = {};
@@ -117,7 +134,6 @@ export class JobQueue {
           thumbPath: img.thumbPath,
           capturedAt: img.capturedAt,
           filename: img.filename,
-          hash: img.hash,
         };
       });
       batch.set(fb.doc(db, 'users', uid, 'groups', groupId), {
@@ -126,84 +142,122 @@ export class JobQueue {
         images,
         state: 'grouped',
         analysis: null,
-        analysisSig: null,
         createdAt: now + gi,
-        updatedAt: now + gi,
       });
-    });
+    }
     await batch.commit();
+    done = steps;
+    this._tick(0, 0);
+
+    // 6. Auto-analyze each group (parallel, 2 at a time)
+    this._autoAnalyze(uid, verifiedGroups, groupIds);
   }
 
-  async analyzeGroups({ uid, groups, groupIds, getRepIdsForGroup }) {
-    await ensureIdToken();
-    // Analyze selected groups individually (never merge across groups)
-    for (const groupId of groupIds) {
-      const group = groups.find(g => g.id === groupId);
-      if (!group) continue;
-
-      const repIds = (getRepIdsForGroup?.(groupId) || []).slice(0, 3);
-      const heroIds = repIds.length ? repIds : (group.heroImageIds || []).slice(0, 3);
-      if (!heroIds.length) continue;
-
-      // Cache signature to avoid reruns
-      const sig = heroIds.join('|') + '::' + (heroIds.map(id => group.images?.[id]?.hash || '').join(','));
-      if (group.analysisSig && group.analysisSig === sig && group.analysis) continue;
-
-      await fb.setGroup(uid, groupId, { state: 'grouped', updatedAt: Date.now() });
-
-      const heroImgs = heroIds.map(id => group.images?.[id]).filter(Boolean);
-      const heroBase64 = [];
-      for (const img of heroImgs) {
-        const blob = await fb.getBlob(fb.sRef(storage, img.storagePath));
-        const file = new File([blob], 'x.jpg', { type: blob.type || 'image/jpeg' });
-        const dataUrl = await fileToJpegDataUrl(file, 768, 0.65);
-        heroBase64.push(dataUrl.split(',')[1]);
-        await yieldToUI();
+  async _autoAnalyze(uid, groups, groupIds) {
+    let i = 0;
+    const worker = async () => {
+      while (i < groups.length) {
+        const ci = i++;
+        const set = groups[ci];
+        const groupId = groupIds[ci];
+        try {
+          const heroImgs = set.slice(0, 3);
+          const heroB64 = await Promise.all(heroImgs.map(async img => {
+            const blob = await fb.getBlob(fb.sRef(storage, img.thumbPath));
+            const file = new File([blob], 'h.jpg', { type: blob.type || 'image/jpeg' });
+            const dataUrl = await fileToJpegDataUrl(file, 512, 0.65);
+            return dataUrl.split(',')[1];
+          }));
+          const resp = await fetch('/.netlify/functions/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ heroImages: heroB64 }),
+          });
+          if (resp.ok) {
+            const analysis = await resp.json();
+            await fb.updateGroup(uid, groupId, { analysis, state: 'analyzed' });
+          }
+        } catch (e) {
+          console.error('Auto-analyze failed for', groupId, e);
+        }
       }
+    };
+    await Promise.all(Array.from({ length: 2 }, () => worker()));
+  }
 
-      const resp = await fetch('/.netlify/functions/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ heroImages: heroBase64 }),
-      });
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}));
-        toast(errData.error || `Analyze failed (${resp.status})`, true);
-        continue;
-      }
-      const analysis = await resp.json();
-      if (analysis.error) {
-        toast(analysis.error, true);
-        continue;
-      }
-
-      await fb.setGroup(uid, groupId, {
-        analysis,
-        analysisSig: sig,
-        state: 'analyzed',
-        updatedAt: Date.now(),
-      });
-      await yieldToUI();
+  async deleteGroups({ uid, groups, groupIds }) {
+    for (const gid of groupIds) {
+      const g = groups.find(x => x.id === gid);
+      if (!g) continue;
+      // Delete storage files
+      const imgs = Object.values(g.images || {});
+      const deletes = imgs.flatMap(img => [
+        fb.deleteObject(fb.sRef(storage, img.storagePath)).catch(() => {}),
+        fb.deleteObject(fb.sRef(storage, img.thumbPath)).catch(() => {}),
+      ]);
+      await Promise.all(deletes);
+      await fb.deleteGroup(uid, gid);
     }
   }
 
-  async deleteGroupsFast({ uid, groups, groupIds }) {
-    // Remove docs first (fast). Cleanup storage asynchronously.
-    for (const groupId of groupIds) {
-      await fb.deleteGroupDoc(uid, groupId).catch(() => {});
+  async removeImages({ uid, group, imageIds }) {
+    const remaining = (group.imageIds || []).filter(id => !imageIds.includes(id));
+    if (!remaining.length) {
+      await this.deleteGroups({ uid, groups: [group], groupIds: [group.id] });
+      return;
     }
-    // Fire-and-forget storage cleanup
-    setTimeout(async () => {
-      for (const groupId of groupIds) {
-        const group = groups.find(g => g.id === groupId);
-        if (!group) continue;
-        const imgs = Object.values(group.images || {});
-        await Promise.all(imgs.flatMap(img => [
-          img.storagePath ? fb.deleteObject(fb.sRef(storage, img.storagePath)).catch(() => {}) : null,
-          img.thumbPath ? fb.deleteObject(fb.sRef(storage, img.thumbPath)).catch(() => {}) : null,
-        ]).filter(Boolean));
+    const images = { ...group.images };
+    for (const id of imageIds) {
+      const img = images[id];
+      if (img) {
+        fb.deleteObject(fb.sRef(storage, img.storagePath)).catch(() => {});
+        fb.deleteObject(fb.sRef(storage, img.thumbPath)).catch(() => {});
+        delete images[id];
       }
-    }, 0);
+    }
+    const heroImageIds = remaining.slice(0, 3);
+    await fb.updateGroup(uid, group.id, { imageIds: remaining, heroImageIds, images });
+  }
+
+  async mergeGroups({ uid, groups, groupIds }) {
+    if (groupIds.length < 2) return;
+    const toMerge = groupIds.map(id => groups.find(g => g.id === id)).filter(Boolean);
+    if (toMerge.length < 2) return;
+
+    const allImages = {};
+    const allIds = [];
+    for (const g of toMerge) {
+      Object.assign(allImages, g.images || {});
+      allIds.push(...(g.imageIds || []));
+    }
+    // Sort by capturedAt
+    allIds.sort((a, b) => (allImages[a]?.capturedAt || 0) - (allImages[b]?.capturedAt || 0));
+    const heroImageIds = allIds.slice(0, 3);
+
+    // Keep first group, delete rest
+    const keepId = groupIds[0];
+    await fb.updateGroup(uid, keepId, {
+      imageIds: allIds,
+      heroImageIds,
+      images: allImages,
+      analysis: null,
+      state: 'grouped',
+    });
+    for (let i = 1; i < groupIds.length; i++) {
+      await fb.deleteGroup(uid, groupIds[i]);
+    }
+
+    // Re-analyze merged group
+    const mergedGroup = toMerge[0];
+    const set = allIds.map(id => ({ ...allImages[id], imgId: id }));
+    this._autoAnalyze(uid, [set], [keepId]);
+  }
+
+  async reanalyze({ uid, group }) {
+    const set = (group.imageIds || []).map(id => ({
+      ...(group.images?.[id] || {}),
+      imgId: id,
+    }));
+    await this._autoAnalyze(uid, [set], [group.id]);
   }
 }
-

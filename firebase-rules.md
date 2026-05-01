@@ -1,11 +1,20 @@
-# JunkLister — Firebase Security Rules
+# JunkLister — Firebase Setup Guide
 
-Paste each block into the Firebase Console under the corresponding tab.
+## Firebase Project: `perfectproject-b31c1`
 
 ---
 
-## Firestore Rules
-**Console → Firestore Database → Rules**
+## 1. Enable Authentication
+
+**Console → Authentication → Sign-in method → Enable Google**
+
+Then add your Netlify domain under **Authorized domains** (e.g. `your-site.netlify.app`).
+
+---
+
+## 2. Firestore Rules
+
+**Console → Firestore Database → Create database (Production mode) → Rules**
 
 ```
 rules_version = '2';
@@ -20,8 +29,9 @@ service cloud.firestore {
 
 ---
 
-## Storage Rules
-**Console → Storage → Rules**
+## 3. Storage Rules
+
+**Console → Storage → Get started → Rules**
 
 ```
 rules_version = '2';
@@ -36,18 +46,21 @@ service firebase.storage {
 
 ---
 
-## Required Console Steps
+## 4. Netlify Environment Variable
 
-1. **Authentication** → Sign-in method → Enable **Google**
-2. **Firestore Database** → Create database (Production mode) → Apply rules above
-3. **Storage** → Get started → Apply rules above
-4. **Netlify** → Site config → Environment variables → Add `CLAUDE_API_KEY`
+**Netlify → Site config → Environment variables → Add:**
+
+| Key | Value |
+|-----|-------|
+| `GEMINI_API_KEY` | Your Google AI Studio API key |
+
+Get your key at: https://aistudio.google.com/apikey
 
 ---
 
-## Optional: Storage CORS (if analyze fails with CORS error)
+## 5. Storage CORS (if image download fails)
 
-If image re-download during analysis fails, create `cors.json` and run once:
+Create `cors.json`:
 
 ```json
 [
@@ -60,7 +73,5 @@ If image re-download during analysis fails, create `cors.json` and run once:
 ```
 
 ```bash
-gsutil cors set cors.json gs://junklisting-aa1db.firebasestorage.app
+gsutil cors set cors.json gs://perfectproject-b31c1.firebasestorage.app
 ```
-
-Requires `gsutil` (part of Google Cloud SDK).

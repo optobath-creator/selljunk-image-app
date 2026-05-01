@@ -11,43 +11,40 @@ exports.handler = async (event) => {
     return { statusCode: 405, headers: HEADERS, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
-    if (!process.env.CLAUDE_API_KEY) {
-      // Fail open — assume different items so grouping isn't silently broken
-      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ same: false, error: 'CLAUDE_API_KEY not configured' }) };
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      // Fail open — assume different items
+      return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ same: false, error: 'GEMINI_API_KEY not configured' }) };
     }
 
     const { image1, image2 } = JSON.parse(event.body || '{}');
     if (!image1 || !image2)
-      return { statusCode: 400, headers: HEADERS, body: JSON.stringify({ error: 'Both image1 and image2 are required' }) };
+      return { statusCode: 400, headers: HEADERS, body: JSON.stringify({ error: 'Both image1 and image2 required' }) };
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inlineData: { mimeType: 'image/jpeg', data: image1 } },
+              { inlineData: { mimeType: 'image/jpeg', data: image2 } },
+              { text: 'Are these photos of the same physical object? Answer YES or NO only.' },
+            ],
+          }],
+          generationConfig: { maxOutputTokens: 5, temperature: 0 },
+        }),
       },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 5,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image1 } },
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image2 } },
-            { type: 'text', text: 'Are these photos of the same physical object? Answer YES or NO only.' },
-          ],
-        }],
-      }),
-    });
+    );
 
     const data = await res.json();
-    const answer = data.content?.[0]?.text?.trim().toUpperCase() || 'NO';
+    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toUpperCase() || 'NO';
     return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ same: answer.startsWith('Y') }) };
 
   } catch (err) {
     console.error('sort-check error:', err);
-    // Fail open
     return { statusCode: 200, headers: HEADERS, body: JSON.stringify({ same: false, error: err.message }) };
   }
 };

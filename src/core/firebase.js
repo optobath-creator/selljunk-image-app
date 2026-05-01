@@ -17,6 +17,7 @@ import {
   orderBy,
   writeBatch,
   getDoc,
+  updateDoc,
 } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js';
 import {
   getStorage,
@@ -27,33 +28,35 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-storage.js';
 
 const app = initializeApp({
-  apiKey:            "AIzaSyD2SXwreze3cSWF7bDz3WF-qsilxqmVZH0",
-  authDomain:        "junklisting-aa1db.firebaseapp.com",
-  projectId:         "junklisting-aa1db",
-  storageBucket:     "junklisting-aa1db.firebasestorage.app",
-  messagingSenderId: "752336005616",
-  appId:             "1:752336005616:web:a190e24d75530916f21535"
+  apiKey:            'AIzaSyA9XzoxEOek7MQRQSoXSwsHVTCFE0ByXyc',
+  authDomain:        'perfectproject-b31c1.firebaseapp.com',
+  projectId:         'perfectproject-b31c1',
+  storageBucket:     'perfectproject-b31c1.firebasestorage.app',
+  messagingSenderId: '302836589394',
+  appId:             '1:302836589394:web:fe8be0e512b5a05944108b',
+  measurementId:     'G-4PG5V6Y0CQ',
 });
 
 export const auth = getAuth(app);
 export const provider = new GoogleAuthProvider();
-// Let the SDK auto-detect the best transport for the browser.
-// Safari blocks forced XHR long-polling with CORS errors, so we rely on
-// v12's default auto-detection which picks a Safari-safe transport.
 export const db = initializeFirestore(app, {
   experimentalAutoDetectLongPolling: true,
 });
-export const storage = getStorage(app, "gs://junklisting-aa1db.firebasestorage.app");
+export const storage = getStorage(app, 'gs://perfectproject-b31c1.firebasestorage.app');
 
 export const fb = {
-  signIn: () => signInWithPopup(auth, provider),
-  signOut: () => signOut(auth),
-  onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
-  userGroupsQuery: (uid) => query(collection(db, 'users', uid, 'groups'), orderBy('createdAt', 'desc')),
-  onGroupsSnapshot: (q, next, err) => onSnapshot(q, next, err),
-  docRef: (uid, groupId) => doc(db, 'users', uid, 'groups', groupId),
-  setGroup: (uid, groupId, data, merge = true) => setDoc(doc(db, 'users', uid, 'groups', groupId), data, { merge }),
-  deleteGroupDoc: (uid, groupId) => deleteDoc(doc(db, 'users', uid, 'groups', groupId)),
+  signIn:   () => signInWithPopup(auth, provider),
+  signOut:  () => signOut(auth),
+  onAuth:   (cb) => onAuthStateChanged(auth, cb),
+
+  groupsQuery: (uid) => query(collection(db, 'users', uid, 'groups'), orderBy('createdAt', 'desc')),
+  onSnap:      (q, next, err) => onSnapshot(q, next, err),
+
+  docRef:      (uid, gid) => doc(db, 'users', uid, 'groups', gid),
+  setGroup:    (uid, gid, data, merge = true) => setDoc(doc(db, 'users', uid, 'groups', gid), data, { merge }),
+  updateGroup: (uid, gid, data) => updateDoc(doc(db, 'users', uid, 'groups', gid), data),
+  deleteGroup: (uid, gid) => deleteDoc(doc(db, 'users', uid, 'groups', gid)),
+
   writeBatch,
   doc,
   getDoc,

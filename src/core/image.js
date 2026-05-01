@@ -12,27 +12,26 @@ export async function getStorageObjectUrl(path) {
 }
 
 export function yieldToUI() {
-  return new Promise(resolve => requestAnimationFrame(() => resolve()));
+  return new Promise(r => requestAnimationFrame(() => r()));
 }
 
 export async function fileToJpegDataUrl(file, maxPx, quality) {
-  // createImageBitmap path
   const bmp = await createImageBitmap(file);
   let w = bmp.width, h = bmp.height;
   if (w > maxPx || h > maxPx) {
     if (w >= h) { h = Math.round(h * maxPx / w); w = maxPx; }
-    else { w = Math.round(w * maxPx / h); h = maxPx; }
+    else        { w = Math.round(w * maxPx / h); h = maxPx; }
   }
-  const canvas = 'OffscreenCanvas' in window ? new OffscreenCanvas(w, h) : document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d', { alpha: false });
+  const c = 'OffscreenCanvas' in window ? new OffscreenCanvas(w, h) : document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { alpha: false });
   ctx.drawImage(bmp, 0, 0, w, h);
   bmp.close?.();
   const blob = await new Promise(res => {
-    if (canvas.convertToBlob) canvas.convertToBlob({ type: 'image/jpeg', quality }).then(res);
-    else canvas.toBlob(res, 'image/jpeg', quality);
+    if (c.convertToBlob) c.convertToBlob({ type: 'image/jpeg', quality }).then(res);
+    else c.toBlob(res, 'image/jpeg', quality);
   });
-  return await blobToDataUrl(blob);
+  return blobToDataUrl(blob);
 }
 
 export function dataUrlToBlob(dataUrl) {
@@ -58,47 +57,7 @@ export async function ensureIdToken() {
   await auth.currentUser.getIdToken?.().catch(() => {});
 }
 
-export function dhashFromImageData(imgData, w, h) {
-  // imgData is Uint8ClampedArray RGBA at size (w,h). Expect w=9, h=8.
-  // Convert to grayscale + compare horizontal adjacents.
-  const bits = [];
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w - 1; x++) {
-      const i1 = (y * w + x) * 4;
-      const i2 = (y * w + x + 1) * 4;
-      const g1 = (imgData[i1] * 0.299 + imgData[i1 + 1] * 0.587 + imgData[i1 + 2] * 0.114);
-      const g2 = (imgData[i2] * 0.299 + imgData[i2 + 1] * 0.587 + imgData[i2 + 2] * 0.114);
-      bits.push(g1 > g2 ? 1 : 0);
-    }
-  }
-  // Pack into hex string length 16 (64 bits)
-  let hex = '';
-  for (let i = 0; i < 64; i += 4) {
-    const v = (bits[i] << 3) | (bits[i + 1] << 2) | (bits[i + 2] << 1) | bits[i + 3];
-    hex += v.toString(16);
-  }
-  return hex;
+export async function fileToBase64(file, maxPx, quality) {
+  const dataUrl = await fileToJpegDataUrl(file, maxPx, quality);
+  return dataUrl.split(',')[1];
 }
-
-export function hammingHex(a, b) {
-  if (!a || !b || a.length !== b.length) return 999;
-  const lut = [0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4];
-  let dist = 0;
-  for (let i = 0; i < a.length; i++) {
-    const x = parseInt(a[i], 16) ^ parseInt(b[i], 16);
-    dist += lut[x];
-  }
-  return dist;
-}
-
-export async function computeDhashFromFile(file) {
-  const bmp = await createImageBitmap(file, { resizeWidth: 9, resizeHeight: 8, resizeQuality: 'low' });
-  const canvas = 'OffscreenCanvas' in window ? new OffscreenCanvas(9, 8) : document.createElement('canvas');
-  canvas.width = 9; canvas.height = 8;
-  const ctx = canvas.getContext('2d', { alpha: false });
-  ctx.drawImage(bmp, 0, 0, 9, 8);
-  bmp.close?.();
-  const data = ctx.getImageData(0, 0, 9, 8).data;
-  return dhashFromImageData(data, 9, 8);
-}
-
