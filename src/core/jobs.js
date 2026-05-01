@@ -74,7 +74,7 @@ export class JobQueue {
     const groups = groupByTime(uploaded, 15000);
 
     // 4. AI sort-check — verify first vs last image in each group (parallel, 3 at a time)
-    const verifiedGroups = [];
+    const verifiedResults = new Array(groups.length).fill(null);
     const checkQueue = groups.map((g, i) => ({ group: g, index: i }));
     const checkWorker = async () => {
       while (checkQueue.length) {
@@ -82,7 +82,7 @@ export class JobQueue {
         if (!item) break;
         const g = item.group;
         if (g.length <= 1) {
-          verifiedGroups.push(g);
+          verifiedResults[item.index] = [g];
           continue;
         }
         // Send first and last thumbnails for AI check
@@ -102,19 +102,18 @@ export class JobQueue {
           });
           const out = await resp.json().catch(() => ({}));
           if (out.same === false && g.length > 2) {
-            // Split: try midpoint
             const mid = Math.ceil(g.length / 2);
-            verifiedGroups.push(g.slice(0, mid));
-            verifiedGroups.push(g.slice(mid));
+            verifiedResults[item.index] = [g.slice(0, mid), g.slice(mid)];
           } else {
-            verifiedGroups.push(g);
+            verifiedResults[item.index] = [g];
           }
         } catch {
-          verifiedGroups.push(g); // fail open
+          verifiedResults[item.index] = [g]; // fail open
         }
       }
     };
     await Promise.all(Array.from({ length: 3 }, () => checkWorker()));
+    const verifiedGroups = verifiedResults.flat();
 
     // 5. Write groups to Firestore + auto-trigger analysis
     const batch = fb.writeBatch(db);
@@ -150,7 +149,7 @@ export class JobQueue {
     this._tick(0, 0);
 
     // 6. Auto-analyze each group (parallel, 2 at a time)
-    this._autoAnalyze(uid, verifiedGroups, groupIds);
+    this._autoAnalyze(uid, verifiedGroups, groupIds).catch(e => console.error('Auto-analyze error:', e));
   }
 
   async _autoAnalyze(uid, groups, groupIds) {
@@ -216,7 +215,7 @@ export class JobQueue {
       }
     }
     const heroImageIds = remaining.slice(0, 3);
-    await fb.updateGroup(uid, group.id, { imageIds: remaining, heroImageIds, images });
+    await fb.updateGroup(uid, group.id, { imageIds: remaining, heroImageIds, images, analysis: null, state: 'grouped' });
   }
 
   async mergeGroups({ uid, groups, groupIds }) {
@@ -250,7 +249,7 @@ export class JobQueue {
     // Re-analyze merged group
     const mergedGroup = toMerge[0];
     const set = allIds.map(id => ({ ...allImages[id], imgId: id }));
-    this._autoAnalyze(uid, [set], [keepId]);
+    this._autoAnalyze(uid, [set], [keepId]).catch(e => console.error('Auto-analyze error:', e));
   }
 
   async reanalyze({ uid, group }) {

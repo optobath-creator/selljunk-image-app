@@ -68,10 +68,14 @@ function startSync() {
       for (const id of [...selectedGroupIds]) if (!idSet.has(id)) selectedGroupIds.delete(id);
       if (openGroupId && !idSet.has(openGroupId)) doCloseSheet();
       render();
-      // Re-render open sheet if data changed
+      // Re-render open sheet if data changed (skip if user is editing)
       if (openGroupId) {
-        const g = groups.find(x => x.id === openGroupId);
-        if (g) renderSheet({ group: g, selectedImageIds });
+        const focused = document.activeElement;
+        const isEditing = focused && (focused.id === 'sheetTitleInput' || focused.id === 'sheetPrice' || focused.id === 'sheetDesc');
+        if (!isEditing) {
+          const g = groups.find(x => x.id === openGroupId);
+          if (g) renderSheet({ group: g, selectedImageIds });
+        }
       }
     },
     err => { console.error(err); toast('Sync error', true); },
@@ -262,9 +266,9 @@ async function saveEdits() {
   const description = $('#sheetDesc').value.trim();
   if (title === g.analysis.title && priceMid === g.analysis.priceMid && description === g.analysis.description) return;
   await fb.updateGroup(currentUser.uid, openGroupId, {
-    'analysis.title': title || g.analysis.title,
-    'analysis.priceMid': priceMid || g.analysis.priceMid,
-    'analysis.description': description || g.analysis.description,
+    'analysis.title': title !== '' ? title : g.analysis.title,
+    'analysis.priceMid': priceMid,
+    'analysis.description': description !== '' ? description : g.analysis.description,
   });
 }
 
