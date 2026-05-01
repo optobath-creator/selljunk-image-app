@@ -112,12 +112,14 @@ async function handleUpload(files) {
 }
 
 // ─── Card interactions ──────────────────────────────────
+let longPressHandled = false;
+
 $('#listings').addEventListener('click', e => {
+  if (longPressHandled) { longPressHandled = false; return; }
   const card = e.target.closest('.card');
   if (!card) return;
   const id = card.dataset.id;
   if (e.shiftKey || e.ctrlKey || e.metaKey || selectedGroupIds.size > 0) {
-    // Multi-select mode
     if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
     else selectedGroupIds.add(id);
     render();
@@ -136,6 +138,7 @@ $('#listings').addEventListener('pointerdown', e => {
     if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
     else selectedGroupIds.add(id);
     render();
+    longPressHandled = true;
     pressTimer = null;
   }, 500);
 });
@@ -262,12 +265,13 @@ async function saveEdits() {
   const g = groups.find(x => x.id === openGroupId);
   if (!g || !g.analysis) return;
   const title = $('#sheetTitleInput').value.trim();
-  const priceMid = parseInt($('#sheetPrice').value) || 0;
+  const priceRaw = $('#sheetPrice').value.trim();
+  const priceMid = priceRaw !== '' ? (parseInt(priceRaw) || 0) : null;
   const description = $('#sheetDesc').value.trim();
   if (title === g.analysis.title && priceMid === g.analysis.priceMid && description === g.analysis.description) return;
   await fb.updateGroup(currentUser.uid, openGroupId, {
     'analysis.title': title !== '' ? title : g.analysis.title,
-    'analysis.priceMid': priceMid,
+    'analysis.priceMid': priceMid != null ? priceMid : g.analysis.priceMid,
     'analysis.description': description !== '' ? description : g.analysis.description,
   });
 }
