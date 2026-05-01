@@ -502,6 +502,10 @@ async function idbGet(key) {
   });
 }
 
+// ── HELPERS ──
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+let pickerBlobUrls = [];
+
 // ── GOOGLE AUTH ──
 const gateEl  = document.getElementById('gate');
 const gateBtn = document.getElementById('gateBtn');
@@ -624,6 +628,8 @@ const pickerPreview = document.getElementById('pickerPreview');
 const pickerSave    = document.getElementById('pickerSave');
 
 function openPicker() {
+  pickerBlobUrls.forEach(u => URL.revokeObjectURL(u));
+  pickerBlobUrls = [];
   pickerFiles = [];
   pickerPreview.innerHTML = '';
   pickerSave.disabled = true;
@@ -655,10 +661,13 @@ function addPickerFiles(files) {
 }
 
 function renderPickerPreview() {
+  pickerBlobUrls.forEach(u => URL.revokeObjectURL(u));
+  pickerBlobUrls = [];
   if (pickerFiles.length > 4) pickerFiles = pickerFiles.slice(0, 4);
   pickerPreview.innerHTML = '';
   pickerFiles.forEach((f, i) => {
     const url = URL.createObjectURL(f);
+    pickerBlobUrls.push(url);
     const wrap = document.createElement('div');
     wrap.className = 'picker-thumb-wrap';
     wrap.innerHTML = `<img class="picker-thumb" src="${url}" alt=""><button class="picker-thumb-del" data-i="${i}">✕</button>`;
@@ -810,7 +819,7 @@ function renderGrid(status) {
     };
 
     const errSnippet = isFailed && item.errorMsg
-      ? `<div class="card-meta" style="color:var(--red);font-size:.6rem;margin-top:2px">${item.errorMsg.slice(0,60)}…</div>`
+      ? `<div class="card-meta" style="color:var(--red);font-size:.6rem;margin-top:2px">${esc(item.errorMsg.slice(0,60))}…</div>`
       : '';
 
     card.innerHTML = `
@@ -824,8 +833,8 @@ function renderGrid(status) {
         ${(isReady || isListed) ? `<div class="card-listed-check" title="${isListed ? 'Unmark' : 'Mark listed'}"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="${isListed ? 'white' : 'var(--text3)'}" stroke-width="2"><polyline points="1,6 4.5,9.5 11,2"/></svg></div>` : ''}
       </div>
       <div class="card-info">
-        <div class="card-title">${title}</div>
-        ${price ? `<div class="card-price">${price}</div>` : ''}
+        <div class="card-title">${esc(title)}</div>
+        ${price ? `<div class="card-price">${esc(price)}</div>` : ''}
         ${isProcessing ? `<div class="card-meta" style="color:var(--gold)">Processing…</div>` : ''}
         ${errSnippet}
       </div>
@@ -1050,12 +1059,12 @@ async function openDetail(id) {
   document.getElementById('dDesc').textContent = d.description || '';
 
   const kws = d.keywords || [];
-  document.getElementById('dKwWrap').innerHTML = kws.map(k => `<span class="kw-tag">${k}</span>`).join('');
+  document.getElementById('dKwWrap').innerHTML = kws.map(k => `<span class="kw-tag">${esc(k)}</span>`).join('');
   const kwRaw = document.getElementById('detailKwRaw');
   kwRaw.textContent = kws.join(', ');
   kwRaw.oninput = () => {
     const vals = kwRaw.textContent.split(',').map(s => s.trim()).filter(Boolean);
-    document.getElementById('dKwWrap').innerHTML = vals.map(k => `<span class="kw-tag">${k}</span>`).join('');
+    document.getElementById('dKwWrap').innerHTML = vals.map(k => `<span class="kw-tag">${esc(k)}</span>`).join('');
   };
 
   const mlBtn = document.getElementById('dMarkListedBtn');
