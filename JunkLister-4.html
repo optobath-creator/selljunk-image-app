@@ -558,7 +558,7 @@ onAuthStateChanged(auth, user => {
     document.getElementById('app').style.display = 'none';
     document.getElementById('bottomActions').style.display = 'none';
     gateEl.style.display = 'flex';
-    gateBtn.disabled = false;
+    setGateLoading(false);
   }
 });
 
@@ -569,6 +569,8 @@ function startSync() {
   const q = query(collection(db, 'users', currentUid, 'items'), orderBy('timestamp', 'desc'));
   unsubscribe = onSnapshot(q, snap => {
     items = snap.docs.map(d => ({ firestoreId: d.id, ...d.data() }));
+    const validIds = new Set(items.filter(i => i.status === 'staged').map(i => i.firestoreId));
+    for (const id of [...selectedIds]) if (!validIds.has(id)) selectedIds.delete(id);
     renderAll();
   }, err => {
     console.error('Sync error:', err);
