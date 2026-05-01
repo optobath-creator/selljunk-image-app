@@ -101,7 +101,7 @@ export class JobQueue {
             body: JSON.stringify({ image1: b1, image2: b2 }),
           });
           const out = await resp.json().catch(() => ({}));
-          if (out.same === false && g.length > 2) {
+          if (out.same === false && g.length >= 2) {
             const mid = Math.ceil(g.length / 2);
             verifiedResults[item.index] = [g.slice(0, mid), g.slice(mid)];
           } else {

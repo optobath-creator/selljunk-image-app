@@ -142,7 +142,7 @@ $('#listings').addEventListener('pointerdown', e => {
     pressTimer = null;
   }, 500);
 });
-['pointerup', 'pointercancel', 'pointermove'].forEach(ev =>
+['pointerup', 'pointercancel'].forEach(ev =>
   $('#listings').addEventListener(ev, () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } }));
 
 // ─── Action bar ─────────────────────────────────────────
@@ -169,10 +169,10 @@ $('#deselectBtn').onclick = () => { selectedGroupIds.clear(); render(); };
 
 // ─── Sheet ──────────────────────────────────────────────
 function openGroup(id) {
-  openGroupId = id;
-  selectedImageIds.clear();
   const g = groups.find(x => x.id === id);
   if (!g) return;
+  openGroupId = id;
+  selectedImageIds.clear();
   renderSheet({ group: g, selectedImageIds });
 }
 
