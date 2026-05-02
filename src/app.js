@@ -29,13 +29,31 @@ const queue = new JobQueue({
 });
 
 // ─── Auth (anonymous, auto-sign-in) ─────────────────────
+let authAttempted = false;
 fb.onAuth(async user => {
   if (!user) {
+    if (authAttempted) {
+      // Anonymous auth failed or not enabled — show app with fallback uid
+      currentUser = { uid: 'local-' + (localStorage.getItem('jl_uid') || crypto.randomUUID()) };
+      localStorage.setItem('jl_uid', currentUser.uid.replace('local-', ''));
+      $('#app').hidden = false;
+      $('#authScreen').hidden = true;
+      startSync();
+      return;
+    }
+    authAttempted = true;
     cacheClear();
     groups = [];
     selectedGroupIds.clear();
-    // Auto sign-in anonymously
-    try { await fb.signIn(); } catch (e) { console.error('Auto sign-in failed:', e); }
+    try { await fb.signIn(); } catch (e) {
+      console.error('Auto sign-in failed:', e);
+      // Trigger fallback
+      currentUser = { uid: 'local-' + (localStorage.getItem('jl_uid') || crypto.randomUUID()) };
+      localStorage.setItem('jl_uid', currentUser.uid.replace('local-', ''));
+      $('#app').hidden = false;
+      $('#authScreen').hidden = true;
+      startSync();
+    }
     return;
   }
   currentUser = user;
