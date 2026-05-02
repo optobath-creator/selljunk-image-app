@@ -1,8 +1,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js';
 import {
   getAuth,
-  signInWithPopup,
-  GoogleAuthProvider,
+  signInAnonymously,
   signOut,
   onAuthStateChanged,
 } from 'https://www.gstatic.com/firebasejs/12.12.1/firebase-auth.js';
@@ -38,14 +37,13 @@ const app = initializeApp({
 });
 
 export const auth = getAuth(app);
-export const provider = new GoogleAuthProvider();
 export const db = initializeFirestore(app, {
   experimentalAutoDetectLongPolling: true,
 });
 export const storage = getStorage(app, 'gs://perfectproject-b31c1.firebasestorage.app');
 
 export const fb = {
-  signIn:   () => signInWithPopup(auth, provider),
+  signIn:   () => signInAnonymously(auth),
   signOut:  () => signOut(auth),
   onAuth:   (cb) => onAuthStateChanged(auth, cb),
 

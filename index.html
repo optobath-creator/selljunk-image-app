@@ -10,12 +10,10 @@
 </head>
 <body>
 
-  <!-- Auth -->
-  <div id="authScreen" class="auth">
+  <!-- Auth (hidden, auto-sign-in) -->
+  <div id="authScreen" class="auth" hidden>
     <div class="auth-logo">Junk<span>Lister</span></div>
     <p class="auth-tagline">snap · sort · sell</p>
-    <button id="googleSignInBtn" class="btn-signin" type="button">Continue with Google</button>
-    <p id="authErr" class="auth-error"></p>
   </div>
 
   <!-- App -->
@@ -24,7 +22,7 @@
       <span class="header-logo">Junk<span>Lister</span></span>
       <div class="header-right">
         <img id="userAvatar" class="avatar" alt="" hidden>
-        <button id="signOutBtn" class="btn-text" type="button">Sign Out</button>
+
       </div>
     </header>
 

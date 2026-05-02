@@ -28,32 +28,19 @@ const queue = new JobQueue({
   },
 });
 
-// ─── Auth ───────────────────────────────────────────────
-$('#googleSignInBtn').onclick = async () => {
-  $('#authErr').textContent = '';
-  try { await fb.signIn(); }
-  catch (e) { $('#authErr').textContent = e?.message || 'Sign-in failed'; }
-};
-$('#signOutBtn').onclick = async () => {
-  if (unsub) { unsub(); unsub = null; }
-  await fb.signOut();
-};
-
-fb.onAuth(user => {
-  currentUser = user;
+// ─── Auth (anonymous, auto-sign-in) ─────────────────────
+fb.onAuth(async user => {
   if (!user) {
     cacheClear();
     groups = [];
     selectedGroupIds.clear();
-    $('#app').hidden = true;
-    $('#authScreen').hidden = false;
+    // Auto sign-in anonymously
+    try { await fb.signIn(); } catch (e) { console.error('Auto sign-in failed:', e); }
     return;
   }
+  currentUser = user;
   $('#app').hidden = false;
   $('#authScreen').hidden = true;
-  const av = $('#userAvatar');
-  if (user.photoURL) { av.src = user.photoURL; av.hidden = false; }
-  else av.hidden = true;
   startSync();
 });
 
