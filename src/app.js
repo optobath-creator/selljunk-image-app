@@ -2,404 +2,287 @@ import { fb, auth, db, storage } from './core/firebase.js';
 import { cacheClear } from './core/cache.js';
 import { toast } from './core/toast.js';
 import { JobQueue } from './core/jobs.js';
-import { $, $$, setHidden } from './ui/dom.js';
-import { renderCards, renderGroupSheet } from './ui/render.js';
 import { getStorageObjectUrl } from './core/image.js';
+import { $ } from './ui/dom.js';
+import { renderListings, renderSheet, closeSheet } from './ui/render.js';
 
 let currentUser = null;
 let groups = [];
 let unsub = null;
-
 const selectedGroupIds = new Set();
 let openGroupId = null;
 const selectedImageIds = new Set();
-const repOverride = new Map(); // groupId -> [imgIds] (uses selection at analyze-time)
 
 const queue = new JobQueue({
   onProgress: ({ pending, total }) => {
-    const el = $('#globalProgress');
-    const count = $('#progressCount');
+    const bar = $('#progressBar');
     const fill = $('#progressFill');
     if (!total || pending <= 0) {
-      setHidden(el, true);
-      count.textContent = '0';
+      bar.hidden = true;
       fill.style.width = '0%';
       return;
     }
-    setHidden(el, false);
-    count.textContent = String(pending);
-    const done = Math.max(0, total - pending);
-    fill.style.width = `${Math.round((done / total) * 100)}%`;
-  }
+    bar.hidden = false;
+    const pct = Math.round(((total - pending) / total) * 100);
+    fill.style.width = pct + '%';
+  },
 });
 
-function setAppVisible(visible) {
-  const app = $('#app');
-  const authScreen = $('#authScreen');
-  if (visible) {
-    authScreen.style.display = 'none';
-    app.style.display = '';
-    app.setAttribute('aria-hidden', 'false');
-  } else {
-    authScreen.style.display = '';
-    app.style.display = 'none';
-    app.setAttribute('aria-hidden', 'true');
-  }
-}
-
-// Auth
-$('#googleSignInBtn').onclick = async () => {
-  $('#authErr').textContent = '';
-  try { await fb.signIn(); }
-  catch (e) { $('#authErr').textContent = e?.message || 'Sign-in failed'; }
-};
-$('#signOutBtn').onclick = async () => {
-  if (unsub) { unsub(); unsub = null; }
-  await fb.signOut();
-};
-
-fb.onAuthStateChanged(user => {
-  currentUser = user;
+// ─── Auth (anonymous, auto-sign-in) ─────────────────────
+let authAttempted = false;
+fb.onAuth(async user => {
   if (!user) {
+    if (authAttempted) {
+      // Anonymous auth failed or not enabled — show app with fallback uid
+      currentUser = { uid: 'local-' + (localStorage.getItem('jl_uid') || crypto.randomUUID()) };
+      localStorage.setItem('jl_uid', currentUser.uid.replace('local-', ''));
+      $('#app').hidden = false;
+      $('#authScreen').hidden = true;
+      startSync();
+      return;
+    }
+    authAttempted = true;
     cacheClear();
     groups = [];
     selectedGroupIds.clear();
-    setAppVisible(false);
+    try { await fb.signIn(); } catch (e) {
+      console.error('Auto sign-in failed:', e);
+      // Trigger fallback
+      currentUser = { uid: 'local-' + (localStorage.getItem('jl_uid') || crypto.randomUUID()) };
+      localStorage.setItem('jl_uid', currentUser.uid.replace('local-', ''));
+      $('#app').hidden = false;
+      $('#authScreen').hidden = true;
+      startSync();
+    }
     return;
   }
-
-  setAppVisible(true);
-  const av = $('#userAvatar');
-  if (user.photoURL) { av.src = user.photoURL; av.style.display = ''; }
-  else av.style.display = 'none';
-
+  currentUser = user;
+  $('#app').hidden = false;
+  $('#authScreen').hidden = true;
   startSync();
 });
 
 function startSync() {
   if (!currentUser) return;
   if (unsub) unsub();
-  const q = fb.userGroupsQuery(currentUser.uid);
-  unsub = fb.onGroupsSnapshot(q, snap => {
-    groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // keep selections that still exist
-    const idSet = new Set(groups.map(g => g.id));
-    for (const id of Array.from(selectedGroupIds)) if (!idSet.has(id)) selectedGroupIds.delete(id);
-    if (openGroupId && !idSet.has(openGroupId)) closeGroup();
-    render();
-  }, err => {
-    console.error(err);
-    toast('Sync error', true);
-  });
+  unsub = fb.onSnap(
+    fb.groupsQuery(currentUser.uid),
+    snap => {
+      groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const idSet = new Set(groups.map(g => g.id));
+      for (const id of [...selectedGroupIds]) if (!idSet.has(id)) selectedGroupIds.delete(id);
+      if (openGroupId && !idSet.has(openGroupId)) doCloseSheet();
+      render();
+      // Re-render open sheet if data changed (skip if user is editing)
+      if (openGroupId) {
+        const focused = document.activeElement;
+        const isEditing = focused && (focused.id === 'sheetTitleInput' || focused.id === 'sheetPrice' || focused.id === 'sheetDesc');
+        if (!isEditing) {
+          const g = groups.find(x => x.id === openGroupId);
+          if (g) renderSheet({ group: g, selectedImageIds });
+        }
+      }
+    },
+    err => { console.error(err); render(); toast('Sync error', true); },
+  );
 }
 
-// Upload dropzone
+// ─── Upload ─────────────────────────────────────────────
 const dropzone = $('#dropzone');
 const fileInput = $('#fileInput');
 dropzone.addEventListener('click', () => fileInput.click());
-dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
 fileInput.addEventListener('change', async (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = '';
-  if (!files.length) return;
-  await handleUpload(files);
+  if (files.length) await handleUpload(files);
 });
-
-['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.classList.add('dragover');
-}));
-['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.classList.remove('dragover');
-}));
-dropzone.addEventListener('drop', async (e) => {
+['dragenter', 'dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('upload--over'); }));
+['dragleave', 'drop'].forEach(ev =>
+  dropzone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('upload--over'); }));
+dropzone.addEventListener('drop', async e => {
   const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
-  if (!files.length) return;
-  await handleUpload(files);
+  if (files.length) await handleUpload(files);
 });
 
 async function handleUpload(files) {
   if (!currentUser) return;
   try {
-    await queue.uploadAndGroup({ uid: currentUser.uid, files });
-    toast('Uploaded');
+    await queue.uploadAndProcess({ uid: currentUser.uid, files });
+    toast('Done');
   } catch (e) {
     console.error(e);
     toast(e?.message || 'Upload failed', true);
   }
 }
 
-// Global actions
-const selectAllBtn = $('#selectAllBtn');
-const deleteBtn = $('#deleteBtn');
-const analyzeBtn = $('#analyzeBtn');
+// ─── Card interactions ──────────────────────────────────
+let longPressHandled = false;
 
-selectAllBtn.onclick = () => {
-  if (!groups.length) return;
-  const allSelected = selectedGroupIds.size === groups.length;
+$('#listings').addEventListener('click', e => {
+  if (longPressHandled) { longPressHandled = false; return; }
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const id = card.dataset.id;
+  if (e.shiftKey || e.ctrlKey || e.metaKey || selectedGroupIds.size > 0) {
+    if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
+    else selectedGroupIds.add(id);
+    render();
+  } else {
+    openGroup(id);
+  }
+});
+
+// Long-press for multi-select on mobile
+let pressTimer = null;
+$('#listings').addEventListener('pointerdown', e => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  pressTimer = setTimeout(() => {
+    const id = card.dataset.id;
+    if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
+    else selectedGroupIds.add(id);
+    render();
+    longPressHandled = true;
+    pressTimer = null;
+  }, 500);
+});
+['pointerup', 'pointercancel'].forEach(ev =>
+  $('#listings').addEventListener(ev, () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } }));
+
+// ─── Action bar ─────────────────────────────────────────
+$('#mergeBtn').onclick = async () => {
+  if (!currentUser || selectedGroupIds.size < 2) return;
+  await queue.mergeGroups({ uid: currentUser.uid, groups, groupIds: Array.from(selectedGroupIds) });
   selectedGroupIds.clear();
-  if (!allSelected) groups.forEach(g => selectedGroupIds.add(g.id));
   render();
+  toast('Groups merged');
 };
 
-deleteBtn.onclick = async () => {
-  if (!currentUser) return;
-  if (!selectedGroupIds.size) return;
-  if (!confirm(`Delete ${selectedGroupIds.size} group(s) and all photos?`)) return;
+$('#deleteBtn').onclick = async () => {
+  if (!currentUser || !selectedGroupIds.size) return;
+  const n = selectedGroupIds.size;
+  if (!confirm(`Delete ${n} group${n > 1 ? 's' : ''} and all photos?`)) return;
   const ids = Array.from(selectedGroupIds);
   selectedGroupIds.clear();
   render();
-  await queue.deleteGroupsFast({ uid: currentUser.uid, groups, groupIds: ids });
+  await queue.deleteGroups({ uid: currentUser.uid, groups, groupIds: ids });
   toast('Deleted');
 };
 
-analyzeBtn.onclick = async () => {
-  if (!currentUser) return;
-  const ids = Array.from(selectedGroupIds);
-  if (!ids.length) return;
-  analyzeBtn.disabled = true;
-  try {
-    await queue.analyzeGroups({
-      uid: currentUser.uid,
-      groups,
-      groupIds: ids,
-      getRepIdsForGroup: (gid) => repOverride.get(gid) || [],
-    });
-    toast('Ready');
-  } finally {
-    analyzeBtn.disabled = false;
-  }
-};
+$('#deselectBtn').onclick = () => { selectedGroupIds.clear(); render(); };
 
-// Card interactions: tap selects, dblclick opens (desktop). Long-press opens (mobile).
-let pressTimer = null;
-$('#cards').addEventListener('pointerdown', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  const id = card.dataset.id;
-  pressTimer = setTimeout(() => openGroup(id), 520);
-});
-$('#cards').addEventListener('pointerup', () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = null; });
-$('#cards').addEventListener('pointercancel', () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = null; });
-
-$('#cards').addEventListener('click', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  const id = card.dataset.id;
-  if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
-  else selectedGroupIds.add(id);
-  render();
-});
-$('#cards').addEventListener('dblclick', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  openGroup(card.dataset.id);
-});
-
-// Group overlay
-$('#closeGroupBtn').onclick = closeGroup;
-$('#groupOverlay').addEventListener('click', (e) => {
-  if (e.target === $('#groupOverlay')) closeGroup();
-});
-
-function openGroup(groupId) {
-  const g = groups.find(x => x.id === groupId);
+// ─── Sheet ──────────────────────────────────────────────
+function openGroup(id) {
+  const g = groups.find(x => x.id === id);
   if (!g) return;
-  openGroupId = groupId;
+  openGroupId = id;
   selectedImageIds.clear();
-  renderGroup();
-  updateGroupActions();
+  renderSheet({ group: g, selectedImageIds });
+  updateSheetActions();
 }
-function closeGroup() {
+
+function doCloseSheet() {
   openGroupId = null;
   selectedImageIds.clear();
-  const overlay = $('#groupOverlay');
-  overlay.classList.remove('open');
-  overlay.setAttribute('aria-hidden', 'true');
+  closeSheet();
 }
 
-// Group image tap selects; if 1-3 selected when Analyze pressed inside group, use those as reps.
-const groupGrid = $('#groupGrid');
-groupGrid.addEventListener('click', (e) => {
-  const cell = e.target.closest('.img');
-  if (!cell) return;
-  const id = cell.dataset.id;
+$('#sheetClose').onclick = doCloseSheet;
+$('#sheet').querySelector('.sheet-backdrop').addEventListener('click', doCloseSheet);
+
+// Image selection in sheet
+$('#sheetImages').addEventListener('click', e => {
+  const dl = e.target.closest('.sheet-img-dl');
+  if (dl) {
+    e.stopPropagation();
+    const wrap = dl.closest('.sheet-img');
+    const img = wrap?.querySelector('img');
+    if (img?.dataset.url) downloadFile(img.dataset.url, img.dataset.filename || 'image.jpg');
+    return;
+  }
+  const wrap = e.target.closest('.sheet-img');
+  if (!wrap) return;
+  const id = wrap.dataset.id;
   if (selectedImageIds.has(id)) selectedImageIds.delete(id);
   else selectedImageIds.add(id);
-  cell.classList.toggle('selected', selectedImageIds.has(id));
-  updateGroupActions();
+  wrap.classList.toggle('sheet-img--selected', selectedImageIds.has(id));
+  updateSheetActions();
 });
 
-// Long press on any image in group view downloads ALL images in group
-let imgPressTimer = null;
-groupGrid.addEventListener('pointerdown', (e) => {
-  const cell = e.target.closest('.img');
-  if (!cell) return;
-  imgPressTimer = setTimeout(() => downloadOpenGroupAll(), 520);
-});
-groupGrid.addEventListener('pointerup', () => { if (imgPressTimer) clearTimeout(imgPressTimer); imgPressTimer = null; });
-groupGrid.addEventListener('pointercancel', () => { if (imgPressTimer) clearTimeout(imgPressTimer); imgPressTimer = null; });
+function updateSheetActions() {
+  const removeBtn = $('#sheetRemoveBtn');
+  if (removeBtn) removeBtn.hidden = selectedImageIds.size === 0;
+}
 
-$('#groupSelectAllBtn').onclick = () => {
-  const g = getOpenGroup();
-  if (!g) return;
-  const ids = g.imageIds || [];
-  const allSelected = selectedImageIds.size === ids.length;
-  selectedImageIds.clear();
-  if (!allSelected) ids.forEach(id => selectedImageIds.add(id));
-  renderGroup();
-  updateGroupActions();
+// Download all
+$('#sheetDownloadAll').onclick = () => {
+  const imgs = Array.from(document.querySelectorAll('#sheetImages .sheet-img img'));
+  imgs.forEach(img => {
+    if (img.dataset.url) downloadFile(img.dataset.url, img.dataset.filename || 'image.jpg');
+  });
 };
 
-$('#groupDeleteBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const ids = Array.from(selectedImageIds);
-  if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} image(s) from this group?`)) return;
+function downloadFile(url, filename) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
 
-  // Update doc fast: remove images and imageIds; cleanup storage async
-  const keep = (g.imageIds || []).filter(id => !selectedImageIds.has(id));
-  const images = { ...(g.images || {}) };
-  const removed = ids.map(id => images[id]).filter(Boolean);
-  ids.forEach(id => delete images[id]);
-
+// Remove selected images from group
+$('#sheetRemoveBtn').onclick = async () => {
+  if (!currentUser || !openGroupId || !selectedImageIds.size) return;
+  const g = groups.find(x => x.id === openGroupId);
+  if (!g) return;
+  await queue.removeImages({ uid: currentUser.uid, group: g, imageIds: Array.from(selectedImageIds) });
   selectedImageIds.clear();
-  if (keep.length === 0) {
-    // deleting whole group
-    closeGroup();
-    await queue.deleteGroupsFast({ uid: currentUser.uid, groups, groupIds: [g.id] });
-  } else {
-    await fb.setGroup(currentUser.uid, g.id, {
-      imageIds: keep,
-      heroImageIds: keep.slice(0, 3),
-      images,
-      analysis: null,
-      analysisSig: null,
-      state: 'grouped',
-      updatedAt: Date.now(),
-    });
-    // async cleanup
-    setTimeout(async () => {
-      for (const img of removed) {
-        if (img?.storagePath) await fb.deleteObject(fb.sRef(storage, img.storagePath)).catch(() => {});
-        if (img?.thumbPath) await fb.deleteObject(fb.sRef(storage, img.thumbPath)).catch(() => {});
-      }
-    }, 0);
-  }
+  toast('Removed');
+};
+
+// Delete entire group from sheet
+$('#sheetDeleteGroup').onclick = async () => {
+  if (!currentUser || !openGroupId) return;
+  if (!confirm('Delete this group and all its photos?')) return;
+  const gid = openGroupId;
+  doCloseSheet();
+  await queue.deleteGroups({ uid: currentUser.uid, groups, groupIds: [gid] });
   toast('Deleted');
 };
 
-$('#groupAnalyzeBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const sel = Array.from(selectedImageIds);
-  if (sel.length >= 1 && sel.length <= 3) repOverride.set(g.id, sel);
-  await queue.analyzeGroups({
-    uid: currentUser.uid,
-    groups,
-    groupIds: [g.id],
-    getRepIdsForGroup: (gid) => repOverride.get(gid) || [],
-  });
-  selectedImageIds.clear();
-  toast('Ready');
+// Re-analyze from sheet
+$('#sheetReanalyze').onclick = async () => {
+  if (!currentUser || !openGroupId) return;
+  const g = groups.find(x => x.id === openGroupId);
+  if (!g) return;
+  toast('Re-analyzing…');
+  await queue.reanalyze({ uid: currentUser.uid, group: g });
 };
 
-$('#groupSplitBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const move = Array.from(selectedImageIds);
-  if (!move.length) return;
-  if (move.length === (g.imageIds || []).length) return toast('Select fewer images to split', true);
+// Inline edits (save on blur)
+$('#sheetTitleInput').addEventListener('blur', saveEdits);
+$('#sheetPrice').addEventListener('blur', saveEdits);
+$('#sheetDesc').addEventListener('blur', saveEdits);
 
-  const keep = (g.imageIds || []).filter(id => !selectedImageIds.has(id));
-  const newIds = move;
-  const now = Date.now();
-  const newGroupId = 'grp_' + now + '_split_' + Math.random().toString(36).slice(2, 7);
-  const mkImages = (idList) => {
-    const images = {};
-    idList.forEach(id => { if (g.images?.[id]) images[id] = g.images[id]; });
-    return images;
-  };
-  const batch = fb.writeBatch(db);
-  batch.set(fb.doc(db, 'users', currentUser.uid, 'groups', g.id), {
-    imageIds: keep,
-    heroImageIds: keep.slice(0, 3),
-    images: mkImages(keep),
-    analysis: null,
-    analysisSig: null,
-    state: 'grouped',
-    updatedAt: now,
-  }, { merge: true });
-  batch.set(fb.doc(db, 'users', currentUser.uid, 'groups', newGroupId), {
-    imageIds: newIds,
-    heroImageIds: newIds.slice(0, 3),
-    images: mkImages(newIds),
-    analysis: null,
-    analysisSig: null,
-    state: 'grouped',
-    createdAt: now + 1,
-    updatedAt: now + 1,
+async function saveEdits() {
+  if (!currentUser || !openGroupId) return;
+  const g = groups.find(x => x.id === openGroupId);
+  if (!g || !g.analysis) return;
+  const title = $('#sheetTitleInput').value.trim();
+  const priceRaw = $('#sheetPrice').value.trim();
+  const priceMid = priceRaw !== '' ? (parseInt(priceRaw) || 0) : null;
+  const description = $('#sheetDesc').value.trim();
+  if (title === g.analysis.title && priceMid === g.analysis.priceMid && description === g.analysis.description) return;
+  await fb.updateGroup(currentUser.uid, openGroupId, {
+    'analysis.title': title !== '' ? title : g.analysis.title,
+    'analysis.priceMid': priceMid != null ? priceMid : g.analysis.priceMid,
+    'analysis.description': description !== '' ? description : g.analysis.description,
   });
-  await batch.commit();
-  selectedImageIds.clear();
-  toast('Split');
-};
-
-function getOpenGroup() {
-  if (!openGroupId) return null;
-  return groups.find(g => g.id === openGroupId) || null;
 }
 
-async function downloadOpenGroupAll() {
-  const g = getOpenGroup();
-  if (!g) return;
-  toast('Preparing downloads…');
-  const imgs = (g.imageIds || []).map(id => g.images?.[id]).filter(Boolean);
-  for (let i = 0; i < imgs.length; i++) {
-    const img = imgs[i];
-    try {
-      const url = await getStorageObjectUrl(img.storagePath);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = img.filename || `photo_${i + 1}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch {}
-  }
-  toast('Downloading…');
+// ─── Render ─────────────────────────────────────────────
+function render() {
+  renderListings({ groups, selectedIds: selectedGroupIds });
 }
-
-function updateActions() {
-  const has = groups.length > 0;
-  selectAllBtn.disabled = !has;
-  deleteBtn.disabled = selectedGroupIds.size === 0;
-  analyzeBtn.disabled = selectedGroupIds.size === 0;
-}
-
-function updateGroupActions() {
-  const g = getOpenGroup();
-  const ids = g?.imageIds || [];
-  $('#groupSelectAllBtn').disabled = ids.length === 0;
-  $('#groupDeleteBtn').disabled = selectedImageIds.size === 0;
-  $('#groupSplitBtn').disabled = selectedImageIds.size === 0 || selectedImageIds.size === ids.length;
-  $('#groupAnalyzeBtn').disabled = false;
-}
-
-async function render() {
-  await renderCards({ groups, selectedIds: selectedGroupIds });
-  updateActions();
-}
-
-async function renderGroup() {
-  const g = getOpenGroup();
-  if (!g) return;
-  await renderGroupSheet({ group: g, selectedImageIds });
-}
-
-// initial UI state
-setHidden($('#globalProgress'), true);
-setAppVisible(false);
-
