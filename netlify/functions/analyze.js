@@ -30,7 +30,7 @@ Schema: {"title":"","description":"","category":"","condition":"","priceLow":0,"
 
 Rules:
 - title: concise, ≤80 chars, describe the item clearly
-- description: 2–3 sentences, honest condition notes
+- description: 2–3 sentences describing the item. Do NOT mention condition, wear, or flaws.
 - category: one of Electronics|Clothing|Furniture|Tools|Sports|Toys|Books|Home|Automotive|Collectibles|Other
 - condition: one of new|like_new|good|fair|poor
 - priceLow ≤ priceMid ≤ priceHigh (whole USD, realistic resale values)
