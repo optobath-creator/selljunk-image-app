@@ -83,7 +83,7 @@ function startSync() {
         }
       }
     },
-    err => { console.error(err); toast('Sync error', true); },
+    err => { console.error(err); render(); toast('Sync error', true); },
   );
 }
 
