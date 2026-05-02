@@ -96,7 +96,7 @@ export function renderSheet({ group, selectedImageIds }) {
   if (group.analysis) {
     analysisPanel.hidden = false;
     titleInput.value = group.analysis.title || '';
-    priceInput.value = group.analysis.priceMid || '';
+    priceInput.value = group.analysis.priceMid ?? '';
     catBadge.textContent = group.analysis.category || '';
     descInput.value = group.analysis.description || '';
   } else {

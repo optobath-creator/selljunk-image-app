@@ -216,6 +216,10 @@ export class JobQueue {
     }
     const heroImageIds = remaining.slice(0, 3);
     await fb.updateGroup(uid, group.id, { imageIds: remaining, heroImageIds, images, analysis: null, state: 'grouped' });
+
+    // Re-analyze with remaining images
+    const set = remaining.map(id => ({ ...images[id], imgId: id }));
+    this._autoAnalyze(uid, [set], [group.id]).catch(e => console.error('Auto-analyze error:', e));
   }
 
   async mergeGroups({ uid, groups, groupIds }) {
