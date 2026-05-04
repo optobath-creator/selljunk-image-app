@@ -2,93 +2,134 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Snap or upload. Get instant AI value estimates and ready-to-use listings." />
   <title>JunkLister</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
 <body>
+
+  <!-- Auth Screen -->
   <div id="authScreen" class="auth">
     <div class="auth__logo">Junk<span>Lister</span></div>
-    <div class="auth__tag">snap · sort · sell</div>
+    <div class="auth__tag">snap · value · sell</div>
     <div class="auth__card">
-      <div class="auth__hint">Sign in to access your listings</div>
+      <div class="auth__hint">Sign in to start scanning</div>
       <button class="btn btn--google" id="googleSignInBtn" type="button">Continue with Google</button>
       <div class="auth__err" id="authErr"></div>
     </div>
   </div>
 
+  <!-- App -->
   <div id="app" class="app" aria-hidden="true">
+
+    <!-- Top Bar -->
     <header class="topbar">
       <div class="topbar__logo">Junk<span>Lister</span></div>
       <div class="topbar__right">
         <img class="topbar__avatar" id="userAvatar" alt="" />
-        <button class="btn btn--ghost" id="signOutBtn" type="button">Sign out</button>
+        <button class="btn btn--ghost btn--sm" id="signOutBtn" type="button">Sign out</button>
       </div>
     </header>
 
-    <main class="main">
-      <section class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload images">
-        <div class="dropzone__inner">
-          <div class="dropzone__title">Drag and drop images here or click to upload</div>
-          <div class="dropzone__sub">Up to 50 images at a time</div>
+    <!-- Scanner Page -->
+    <main id="pageScanner" class="page">
+      <div class="scanner">
+        <div class="scanner__head">
+          <h1 class="scanner__title">What is this worth?</h1>
+          <p class="scanner__sub">Snap or upload. Know its value instantly.</p>
         </div>
-        <input type="file" id="fileInput" accept="image/*" multiple hidden />
-      </section>
 
-      <section class="progress" id="globalProgress" aria-hidden="true">
-        <div class="progress__row">
-          <div class="progress__label" id="progressLabel">Images remaining</div>
-          <div class="progress__count" id="progressCount">0</div>
+        <div class="scanner__zones">
+          <button class="zone zone--snap" id="snapBtn" type="button">
+            <svg class="zone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <span class="zone__label">Snap Photo</span>
+            <span class="zone__hint">Capture the full item clearly in one photo.</span>
+          </button>
+
+          <div class="zone zone--upload" id="uploadZone" tabindex="0" role="button" aria-label="Upload photos">
+            <svg class="zone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <span class="zone__label">Upload Photos</span>
+            <span class="zone__hint">Drag and drop images here, or click to select.</span>
+          </div>
         </div>
-        <div class="progress__bar"><div class="progress__fill" id="progressFill"></div></div>
-      </section>
 
-      <section class="actions">
-        <button class="btn btn--ghost" id="selectAllBtn" type="button" disabled>Select All</button>
-        <button class="btn btn--danger" id="deleteBtn" type="button" disabled>Delete</button>
-        <button class="btn btn--primary" id="analyzeBtn" type="button" disabled>Analyze</button>
-      </section>
+        <!-- Photo Previews -->
+        <div class="scanner__previews" id="photoPreviews" aria-hidden="true">
+          <div class="scanner__thumbs" id="photoThumbs"></div>
+          <div class="scanner__meta">
+            <span class="scanner__count" id="photoCount">0/5 photos</span>
+            <button class="btn btn--ghost btn--sm" id="clearPhotosBtn" type="button">Clear all</button>
+          </div>
+        </div>
 
-      <section class="cards" id="cards"></section>
-      <section class="empty" id="emptyState">
-        <div class="empty__title">No groups yet</div>
-        <div class="empty__sub">Upload photos to start.</div>
-      </section>
+        <!-- CTA Button -->
+        <button class="scanner__cta" id="submitBtn" type="button" aria-hidden="true">See what it's worth</button>
+
+        <!-- Processing Status -->
+        <div class="scanner__status" id="processingStatus" aria-hidden="true">
+          <div class="spinner"></div>
+          <span id="processingText">Analyzing item&hellip;</span>
+        </div>
+      </div>
     </main>
+
+    <!-- Results Page -->
+    <main id="pageResults" class="page" style="display:none">
+      <div class="results">
+        <div class="results__head">
+          <h2 class="results__title">Results</h2>
+        </div>
+        <div class="results__list" id="resultsList"></div>
+        <div class="results__empty" id="resultsEmpty">
+          <p>No items scanned yet.</p>
+          <a href="#/" class="btn btn--primary">Scan your first item</a>
+        </div>
+      </div>
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottomnav" id="bottomNav">
+      <a href="#/" class="bottomnav__item active" data-page="scanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <span>Scanner</span>
+      </a>
+      <a href="#/results" class="bottomnav__item" data-page="results">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+        <span>Results</span>
+      </a>
+    </nav>
   </div>
 
-  <div id="groupOverlay" class="overlay" aria-hidden="true">
-    <div class="sheet">
-      <header class="sheet__top">
-        <button class="btn btn--ghost" id="closeGroupBtn" type="button">Close</button>
-        <div class="sheet__title" id="groupTitle">Group</div>
-      </header>
+  <!-- Hidden file inputs -->
+  <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden />
+  <input type="file" id="fileInput" accept="image/*" multiple hidden />
 
-      <section class="actions actions--sheet">
-        <button class="btn btn--ghost" id="groupSelectAllBtn" type="button" disabled>Select All</button>
-        <button class="btn btn--danger" id="groupDeleteBtn" type="button" disabled>Delete</button>
-        <button class="btn btn--primary" id="groupAnalyzeBtn" type="button" disabled>Analyze</button>
-        <button class="btn btn--ghost" id="groupSplitBtn" type="button" disabled>Split</button>
-      </section>
-
-      <section class="analysis" id="analysisPanel" aria-hidden="true">
-        <div class="analysis__title" id="analysisTitle"></div>
-        <div class="analysis__meta" id="analysisMeta"></div>
-        <div class="analysis__desc" id="analysisDesc"></div>
-      </section>
-
-      <section class="grid" id="groupGrid"></section>
-      <section class="hint">Tip: tap to select images. Long‑press any image to download all images in this group.</section>
-    </div>
-  </div>
-
+  <!-- Toast -->
   <div class="toast" id="toast" aria-live="polite"></div>
 
   <script type="module" src="/src/app.js"></script>
 </body>
 </html>
-
