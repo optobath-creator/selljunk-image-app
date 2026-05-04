@@ -49,11 +49,20 @@ export const fb = {
   signIn: () => signInWithPopup(auth, provider),
   signOut: () => signOut(auth),
   onAuthStateChanged: (cb) => onAuthStateChanged(auth, cb),
+
+  // Groups (legacy)
   userGroupsQuery: (uid) => query(collection(db, 'users', uid, 'groups'), orderBy('createdAt', 'desc')),
   onGroupsSnapshot: (q, next, err) => onSnapshot(q, next, err),
   docRef: (uid, groupId) => doc(db, 'users', uid, 'groups', groupId),
   setGroup: (uid, groupId, data, merge = true) => setDoc(doc(db, 'users', uid, 'groups', groupId), data, { merge }),
   deleteGroupDoc: (uid, groupId) => deleteDoc(doc(db, 'users', uid, 'groups', groupId)),
+
+  // Scans (new scanner flow)
+  userScansQuery: (uid) => query(collection(db, 'users', uid, 'scans'), orderBy('createdAt', 'desc')),
+  onScansSnapshot: (q, next, err) => onSnapshot(q, next, err),
+  setScan: (uid, scanId, data, merge = true) => setDoc(doc(db, 'users', uid, 'scans', scanId), data, { merge }),
+  deleteScanDoc: (uid, scanId) => deleteDoc(doc(db, 'users', uid, 'scans', scanId)),
+
   writeBatch,
   doc,
   getDoc,

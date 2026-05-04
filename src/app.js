@@ -1,38 +1,37 @@
 import { fb, auth, db, storage } from './core/firebase.js';
 import { cacheClear } from './core/cache.js';
 import { toast } from './core/toast.js';
-import { JobQueue } from './core/jobs.js';
+import { getStorageObjectUrl, fileToJpegDataUrl, dataUrlToBlob, yieldToUI, ensureIdToken } from './core/image.js';
 import { $, $$, setHidden } from './ui/dom.js';
-import { renderCards, renderGroupSheet } from './ui/render.js';
-import { getStorageObjectUrl } from './core/image.js';
 
+/* ── State ─────────────────────────────────────── */
 let currentUser = null;
-let groups = [];
-let unsub = null;
+let scans = [];
+let scanUnsub = null;
 
-const selectedGroupIds = new Set();
-let openGroupId = null;
-const selectedImageIds = new Set();
-const repOverride = new Map(); // groupId -> [imgIds] (uses selection at analyze-time)
+let photos = [];
+const MAX_PHOTOS = 5;
 
-const queue = new JobQueue({
-  onProgress: ({ pending, total }) => {
-    const el = $('#globalProgress');
-    const count = $('#progressCount');
-    const fill = $('#progressFill');
-    if (!total || pending <= 0) {
-      setHidden(el, true);
-      count.textContent = '0';
-      fill.style.width = '0%';
-      return;
-    }
-    setHidden(el, false);
-    count.textContent = String(pending);
-    const done = Math.max(0, total - pending);
-    fill.style.width = `${Math.round((done / total) * 100)}%`;
-  }
-});
+/* ── Router ────────────────────────────────────── */
+function getRoute() {
+  const h = location.hash || '#/';
+  if (h.startsWith('#/results')) return 'results';
+  return 'scanner';
+}
 
+function onRoute() {
+  const route = getRoute();
+  $('#pageScanner').style.display = route === 'scanner' ? '' : 'none';
+  $('#pageResults').style.display = route === 'results' ? '' : 'none';
+  $$('.bottomnav__item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === route);
+  });
+  if (route === 'results') renderResults();
+}
+
+window.addEventListener('hashchange', onRoute);
+
+/* ── Auth ──────────────────────────────────────── */
 function setAppVisible(visible) {
   const app = $('#app');
   const authScreen = $('#authScreen');
@@ -47,14 +46,14 @@ function setAppVisible(visible) {
   }
 }
 
-// Auth
 $('#googleSignInBtn').onclick = async () => {
   $('#authErr').textContent = '';
   try { await fb.signIn(); }
   catch (e) { $('#authErr').textContent = e?.message || 'Sign-in failed'; }
 };
+
 $('#signOutBtn').onclick = async () => {
-  if (unsub) { unsub(); unsub = null; }
+  if (scanUnsub) { scanUnsub(); scanUnsub = null; }
   await fb.signOut();
 };
 
@@ -62,8 +61,8 @@ fb.onAuthStateChanged(user => {
   currentUser = user;
   if (!user) {
     cacheClear();
-    groups = [];
-    selectedGroupIds.clear();
+    scans = [];
+    clearPhotos();
     setAppVisible(false);
     return;
   }
@@ -74,332 +73,370 @@ fb.onAuthStateChanged(user => {
   else av.style.display = 'none';
 
   startSync();
+  onRoute();
 });
 
+/* ── Firestore Sync ────────────────────────────── */
 function startSync() {
   if (!currentUser) return;
-  if (unsub) unsub();
-  const q = fb.userGroupsQuery(currentUser.uid);
-  unsub = fb.onGroupsSnapshot(q, snap => {
-    groups = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // keep selections that still exist
-    const idSet = new Set(groups.map(g => g.id));
-    for (const id of Array.from(selectedGroupIds)) if (!idSet.has(id)) selectedGroupIds.delete(id);
-    if (openGroupId && !idSet.has(openGroupId)) closeGroup();
-    render();
+  if (scanUnsub) scanUnsub();
+  const q = fb.userScansQuery(currentUser.uid);
+  scanUnsub = fb.onScansSnapshot(q, snap => {
+    scans = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (getRoute() === 'results') renderResults();
+    updateProcessingStatus();
   }, err => {
     console.error(err);
     toast('Sync error', true);
   });
 }
 
-// Upload dropzone
-const dropzone = $('#dropzone');
-const fileInput = $('#fileInput');
-dropzone.addEventListener('click', () => fileInput.click());
-dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
-fileInput.addEventListener('change', async (e) => {
+/* ── Scanner: Photo Management ─────────────────── */
+function addPhotos(files) {
+  const remaining = MAX_PHOTOS - photos.length;
+  if (remaining <= 0) { toast(`Maximum ${MAX_PHOTOS} photos`, true); return; }
+  const toAdd = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
+  if (!toAdd.length) return;
+
+  for (const file of toAdd) {
+    const id = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+    const dataUrl = URL.createObjectURL(file);
+    photos.push({ id, file, dataUrl });
+  }
+  if (Array.from(files).filter(f => f.type.startsWith('image/')).length > remaining) {
+    toast(`Only ${remaining} more photo(s) added`, true);
+  }
+  renderPreviews();
+}
+
+function removePhoto(id) {
+  const idx = photos.findIndex(p => p.id === id);
+  if (idx >= 0) {
+    URL.revokeObjectURL(photos[idx].dataUrl);
+    photos.splice(idx, 1);
+    renderPreviews();
+  }
+}
+
+function clearPhotos() {
+  photos.forEach(p => URL.revokeObjectURL(p.dataUrl));
+  photos = [];
+  renderPreviews();
+}
+
+function renderPreviews() {
+  const container = $('#photoPreviews');
+  const thumbs = $('#photoThumbs');
+  const count = $('#photoCount');
+  const submitBtn = $('#submitBtn');
+
+  if (!photos.length) {
+    container.setAttribute('aria-hidden', 'true');
+    submitBtn.setAttribute('aria-hidden', 'true');
+    return;
+  }
+
+  container.setAttribute('aria-hidden', 'false');
+  submitBtn.setAttribute('aria-hidden', 'false');
+  count.textContent = `${photos.length}/${MAX_PHOTOS} photos`;
+
+  thumbs.innerHTML = '';
+  for (const p of photos) {
+    const wrap = document.createElement('div');
+    wrap.className = 'thumb';
+    wrap.innerHTML = `<img src="${p.dataUrl}" alt="" /><button class="thumb__remove" data-id="${p.id}" type="button" aria-label="Remove">\u00d7</button>`;
+    thumbs.appendChild(wrap);
+  }
+}
+
+/* ── Scanner: Input Handlers ───────────────────── */
+$('#snapBtn').onclick = () => {
+  if (photos.length >= MAX_PHOTOS) { toast(`Maximum ${MAX_PHOTOS} photos`, true); return; }
+  $('#cameraInput').click();
+};
+$('#cameraInput').onchange = (e) => {
   const files = Array.from(e.target.files || []);
   e.target.value = '';
-  if (!files.length) return;
-  await handleUpload(files);
-});
+  if (files.length) addPhotos(files);
+};
 
-['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.classList.add('dragover');
-}));
-['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, (e) => {
-  e.preventDefault(); e.stopPropagation();
-  dropzone.classList.remove('dragover');
-}));
-dropzone.addEventListener('drop', async (e) => {
+const uploadZone = $('#uploadZone');
+uploadZone.onclick = () => {
+  if (photos.length >= MAX_PHOTOS) { toast(`Maximum ${MAX_PHOTOS} photos`, true); return; }
+  $('#fileInput').click();
+};
+uploadZone.onkeydown = (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uploadZone.click(); }
+};
+$('#fileInput').onchange = (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (files.length) addPhotos(files);
+};
+
+['dragenter', 'dragover'].forEach(ev =>
+  uploadZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); uploadZone.classList.add('dragover'); })
+);
+['dragleave', 'drop'].forEach(ev =>
+  uploadZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); uploadZone.classList.remove('dragover'); })
+);
+uploadZone.addEventListener('drop', e => {
   const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'));
-  if (!files.length) return;
-  await handleUpload(files);
+  if (files.length) addPhotos(files);
 });
 
-async function handleUpload(files) {
-  if (!currentUser) return;
+$('#photoThumbs').addEventListener('click', e => {
+  const btn = e.target.closest('.thumb__remove');
+  if (btn) removePhoto(btn.dataset.id);
+});
+
+$('#clearPhotosBtn').onclick = clearPhotos;
+
+/* ── Scanner: Submit ───────────────────────────── */
+$('#submitBtn').onclick = submitForAnalysis;
+
+async function submitForAnalysis() {
+  if (!photos.length || !currentUser) return;
+
+  const submitBtn = $('#submitBtn');
+  submitBtn.disabled = true;
+
+  const uid = currentUser.uid;
+  const scanId = 'scan_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  const photosCopy = photos.map(p => ({ ...p }));
+
   try {
-    await queue.uploadAndGroup({ uid: currentUser.uid, files });
-    toast('Uploaded');
+    await ensureIdToken();
+
+    await fb.setScan(uid, scanId, {
+      status: 'processing',
+      imageCount: photosCopy.length,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      analysis: null,
+      images: {},
+      imageIds: [],
+    });
+
+    // Brief success animation
+    submitBtn.classList.add('success');
+    submitBtn.textContent = 'Sent!';
+    setTimeout(() => {
+      submitBtn.classList.remove('success');
+      submitBtn.textContent = 'See what it\u2019s worth';
+      submitBtn.disabled = false;
+    }, 600);
+
+    clearPhotos();
+    toast('Analyzing item\u2026');
+
+    processInBackground(scanId, photosCopy, uid);
   } catch (e) {
     console.error(e);
-    toast(e?.message || 'Upload failed', true);
+    toast(e?.message || 'Failed to start analysis', true);
+    submitBtn.disabled = false;
   }
 }
 
-// Global actions
-const selectAllBtn = $('#selectAllBtn');
-const deleteBtn = $('#deleteBtn');
-const analyzeBtn = $('#analyzeBtn');
-
-selectAllBtn.onclick = () => {
-  if (!groups.length) return;
-  const allSelected = selectedGroupIds.size === groups.length;
-  selectedGroupIds.clear();
-  if (!allSelected) groups.forEach(g => selectedGroupIds.add(g.id));
-  render();
-};
-
-deleteBtn.onclick = async () => {
-  if (!currentUser) return;
-  if (!selectedGroupIds.size) return;
-  if (!confirm(`Delete ${selectedGroupIds.size} group(s) and all photos?`)) return;
-  const ids = Array.from(selectedGroupIds);
-  selectedGroupIds.clear();
-  render();
-  await queue.deleteGroupsFast({ uid: currentUser.uid, groups, groupIds: ids });
-  toast('Deleted');
-};
-
-analyzeBtn.onclick = async () => {
-  if (!currentUser) return;
-  const ids = Array.from(selectedGroupIds);
-  if (!ids.length) return;
-  analyzeBtn.disabled = true;
+/* ── Background Processing ─────────────────────── */
+async function processInBackground(scanId, photoItems, uid) {
   try {
-    await queue.analyzeGroups({
-      uid: currentUser.uid,
-      groups,
-      groupIds: ids,
-      getRepIdsForGroup: (gid) => repOverride.get(gid) || [],
-    });
-    toast('Ready');
-  } finally {
-    analyzeBtn.disabled = false;
-  }
-};
+    const heroBase64 = [];
+    for (const p of photoItems.slice(0, 3)) {
+      const dataUrl = await fileToJpegDataUrl(p.file, 768, 0.65);
+      heroBase64.push(dataUrl.split(',')[1]);
+      await yieldToUI();
+    }
 
-// Card interactions: tap selects, dblclick opens (desktop). Long-press opens (mobile).
-let pressTimer = null;
-$('#cards').addEventListener('pointerdown', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  const id = card.dataset.id;
-  pressTimer = setTimeout(() => openGroup(id), 520);
-});
-$('#cards').addEventListener('pointerup', () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = null; });
-$('#cards').addEventListener('pointercancel', () => { if (pressTimer) clearTimeout(pressTimer); pressTimer = null; });
+    const [analysis, imageData] = await Promise.all([
+      analyzeImages(heroBase64),
+      uploadPhotosToStorage(scanId, photoItems, uid),
+    ]);
 
-$('#cards').addEventListener('click', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  const id = card.dataset.id;
-  if (selectedGroupIds.has(id)) selectedGroupIds.delete(id);
-  else selectedGroupIds.add(id);
-  render();
-});
-$('#cards').addEventListener('dblclick', (e) => {
-  const card = e.target.closest('.card');
-  if (!card) return;
-  openGroup(card.dataset.id);
-});
-
-// Group overlay
-$('#closeGroupBtn').onclick = closeGroup;
-$('#groupOverlay').addEventListener('click', (e) => {
-  if (e.target === $('#groupOverlay')) closeGroup();
-});
-
-function openGroup(groupId) {
-  const g = groups.find(x => x.id === groupId);
-  if (!g) return;
-  openGroupId = groupId;
-  selectedImageIds.clear();
-  renderGroup();
-  updateGroupActions();
-}
-function closeGroup() {
-  openGroupId = null;
-  selectedImageIds.clear();
-  const overlay = $('#groupOverlay');
-  overlay.classList.remove('open');
-  overlay.setAttribute('aria-hidden', 'true');
-}
-
-// Group image tap selects; if 1-3 selected when Analyze pressed inside group, use those as reps.
-const groupGrid = $('#groupGrid');
-groupGrid.addEventListener('click', (e) => {
-  const cell = e.target.closest('.img');
-  if (!cell) return;
-  const id = cell.dataset.id;
-  if (selectedImageIds.has(id)) selectedImageIds.delete(id);
-  else selectedImageIds.add(id);
-  cell.classList.toggle('selected', selectedImageIds.has(id));
-  updateGroupActions();
-});
-
-// Long press on any image in group view downloads ALL images in group
-let imgPressTimer = null;
-groupGrid.addEventListener('pointerdown', (e) => {
-  const cell = e.target.closest('.img');
-  if (!cell) return;
-  imgPressTimer = setTimeout(() => downloadOpenGroupAll(), 520);
-});
-groupGrid.addEventListener('pointerup', () => { if (imgPressTimer) clearTimeout(imgPressTimer); imgPressTimer = null; });
-groupGrid.addEventListener('pointercancel', () => { if (imgPressTimer) clearTimeout(imgPressTimer); imgPressTimer = null; });
-
-$('#groupSelectAllBtn').onclick = () => {
-  const g = getOpenGroup();
-  if (!g) return;
-  const ids = g.imageIds || [];
-  const allSelected = selectedImageIds.size === ids.length;
-  selectedImageIds.clear();
-  if (!allSelected) ids.forEach(id => selectedImageIds.add(id));
-  renderGroup();
-  updateGroupActions();
-};
-
-$('#groupDeleteBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const ids = Array.from(selectedImageIds);
-  if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} image(s) from this group?`)) return;
-
-  // Update doc fast: remove images and imageIds; cleanup storage async
-  const keep = (g.imageIds || []).filter(id => !selectedImageIds.has(id));
-  const images = { ...(g.images || {}) };
-  const removed = ids.map(id => images[id]).filter(Boolean);
-  ids.forEach(id => delete images[id]);
-
-  selectedImageIds.clear();
-  if (keep.length === 0) {
-    // deleting whole group
-    closeGroup();
-    await queue.deleteGroupsFast({ uid: currentUser.uid, groups, groupIds: [g.id] });
-  } else {
-    await fb.setGroup(currentUser.uid, g.id, {
-      imageIds: keep,
-      heroImageIds: keep.slice(0, 3),
-      images,
-      analysis: null,
-      analysisSig: null,
-      state: 'grouped',
+    await fb.setScan(uid, scanId, {
+      status: 'complete',
+      analysis,
+      images: imageData.images,
+      imageIds: imageData.imageIds,
       updatedAt: Date.now(),
     });
-    // async cleanup
-    setTimeout(async () => {
-      for (const img of removed) {
-        if (img?.storagePath) await fb.deleteObject(fb.sRef(storage, img.storagePath)).catch(() => {});
-        if (img?.thumbPath) await fb.deleteObject(fb.sRef(storage, img.thumbPath)).catch(() => {});
+
+    toast('Analysis complete!');
+  } catch (err) {
+    console.error('Processing error:', err);
+    await fb.setScan(uid, scanId, {
+      status: 'error',
+      error: err.message || 'Processing failed',
+      updatedAt: Date.now(),
+    }).catch(() => {});
+    toast('Analysis failed', true);
+  } finally {
+    photoItems.forEach(p => { try { URL.revokeObjectURL(p.dataUrl); } catch {} });
+  }
+}
+
+async function analyzeImages(heroBase64) {
+  const resp = await fetch('/.netlify/functions/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ heroImages: heroBase64 }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || `Analysis failed (${resp.status})`);
+  }
+  const result = await resp.json();
+  if (result.error) throw new Error(result.error);
+  return result;
+}
+
+async function uploadPhotosToStorage(scanId, photoItems, uid) {
+  const images = {};
+  const imageIds = [];
+
+  for (const p of photoItems) {
+    const imgId = 'img_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const fullPath = `users/${uid}/images/${imgId}.jpg`;
+    const thumbPath = `users/${uid}/thumbs/${imgId}.jpg`;
+
+    const [fullDataUrl, thumbDataUrl] = await Promise.all([
+      fileToJpegDataUrl(p.file, 1600, 0.82),
+      fileToJpegDataUrl(p.file, 320, 0.70),
+    ]);
+
+    await Promise.all([
+      fb.uploadBytes(fb.sRef(storage, fullPath), dataUrlToBlob(fullDataUrl), { contentType: 'image/jpeg' }),
+      fb.uploadBytes(fb.sRef(storage, thumbPath), dataUrlToBlob(thumbDataUrl), { contentType: 'image/jpeg' }),
+    ]);
+
+    images[imgId] = { storagePath: fullPath, thumbPath, filename: p.file.name };
+    imageIds.push(imgId);
+    await yieldToUI();
+  }
+
+  return { images, imageIds };
+}
+
+/* ── Processing Status ─────────────────────────── */
+function updateProcessingStatus() {
+  const processing = scans.filter(s => s.status === 'processing');
+  const el = $('#processingStatus');
+  const text = $('#processingText');
+
+  if (processing.length > 0) {
+    el.setAttribute('aria-hidden', 'false');
+    text.textContent = processing.length === 1
+      ? 'Analyzing item\u2026'
+      : `Analyzing ${processing.length} items\u2026`;
+  } else {
+    el.setAttribute('aria-hidden', 'true');
+  }
+}
+
+/* ── Results Rendering ─────────────────────────── */
+function renderResults() {
+  const list = $('#resultsList');
+  const empty = $('#resultsEmpty');
+
+  if (!scans.length) {
+    list.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+
+  list.style.display = '';
+  empty.style.display = 'none';
+  list.innerHTML = '';
+
+  for (const scan of scans) {
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.dataset.id = scan.id;
+
+    if (scan.status === 'processing') {
+      card.innerHTML = '<div class="result-card__processing"><div class="spinner spinner--sm"></div><span>Analyzing\u2026</span></div>';
+    } else if (scan.status === 'error') {
+      card.innerHTML = `<div class="result-card__error"><span>Analysis failed</span><button class="btn btn--ghost btn--sm result-card__delete" data-id="${scan.id}">Remove</button></div>`;
+    } else if (scan.status === 'complete' && scan.analysis) {
+      const a = scan.analysis;
+      const thumbIds = (scan.imageIds || []).slice(0, 3);
+      const condition = (a.condition || '').replace(/_/g, ' ');
+      const meta = [a.category, condition].filter(Boolean).join(' \u00b7 ');
+
+      card.innerHTML = `
+        <div class="result-card__images" data-scan="${scan.id}"></div>
+        <div class="result-card__body">
+          <div class="result-card__title">${esc(a.title || 'Item')}</div>
+          <div class="result-card__price">$${a.priceLow}\u2009\u2013\u2009$${a.priceHigh}</div>
+          ${meta ? `<div class="result-card__meta">${esc(meta)}</div>` : ''}
+          <div class="result-card__desc">${esc(a.description || '')}</div>
+          <div class="result-card__actions">
+            <button class="btn btn--primary btn--sm result-card__listing" data-id="${scan.id}">Create listing</button>
+            <button class="btn btn--danger btn--sm result-card__delete" data-id="${scan.id}">Delete</button>
+          </div>
+        </div>`;
+
+      const imgContainer = card.querySelector('.result-card__images');
+      for (const imgId of thumbIds) {
+        const img = scan.images?.[imgId];
+        if (img?.thumbPath) {
+          const imgEl = document.createElement('img');
+          imgEl.alt = '';
+          imgEl.className = 'result-card__img';
+          imgContainer.appendChild(imgEl);
+          getStorageObjectUrl(img.thumbPath).then(url => { imgEl.src = url; }).catch(() => {});
+        }
       }
-    }, 0);
+    }
+
+    list.appendChild(card);
   }
-  toast('Deleted');
-};
-
-$('#groupAnalyzeBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const sel = Array.from(selectedImageIds);
-  if (sel.length >= 1 && sel.length <= 3) repOverride.set(g.id, sel);
-  await queue.analyzeGroups({
-    uid: currentUser.uid,
-    groups,
-    groupIds: [g.id],
-    getRepIdsForGroup: (gid) => repOverride.get(gid) || [],
-  });
-  selectedImageIds.clear();
-  toast('Ready');
-};
-
-$('#groupSplitBtn').onclick = async () => {
-  const g = getOpenGroup();
-  if (!g || !currentUser) return;
-  const move = Array.from(selectedImageIds);
-  if (!move.length) return;
-  if (move.length === (g.imageIds || []).length) return toast('Select fewer images to split', true);
-
-  const keep = (g.imageIds || []).filter(id => !selectedImageIds.has(id));
-  const newIds = move;
-  const now = Date.now();
-  const newGroupId = 'grp_' + now + '_split_' + Math.random().toString(36).slice(2, 7);
-  const mkImages = (idList) => {
-    const images = {};
-    idList.forEach(id => { if (g.images?.[id]) images[id] = g.images[id]; });
-    return images;
-  };
-  const batch = fb.writeBatch(db);
-  batch.set(fb.doc(db, 'users', currentUser.uid, 'groups', g.id), {
-    imageIds: keep,
-    heroImageIds: keep.slice(0, 3),
-    images: mkImages(keep),
-    analysis: null,
-    analysisSig: null,
-    state: 'grouped',
-    updatedAt: now,
-  }, { merge: true });
-  batch.set(fb.doc(db, 'users', currentUser.uid, 'groups', newGroupId), {
-    imageIds: newIds,
-    heroImageIds: newIds.slice(0, 3),
-    images: mkImages(newIds),
-    analysis: null,
-    analysisSig: null,
-    state: 'grouped',
-    createdAt: now + 1,
-    updatedAt: now + 1,
-  });
-  await batch.commit();
-  selectedImageIds.clear();
-  toast('Split');
-};
-
-function getOpenGroup() {
-  if (!openGroupId) return null;
-  return groups.find(g => g.id === openGroupId) || null;
 }
 
-async function downloadOpenGroupAll() {
-  const g = getOpenGroup();
-  if (!g) return;
-  toast('Preparing downloads…');
-  const imgs = (g.imageIds || []).map(id => g.images?.[id]).filter(Boolean);
-  for (let i = 0; i < imgs.length; i++) {
-    const img = imgs[i];
-    try {
-      const url = await getStorageObjectUrl(img.storagePath);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = img.filename || `photo_${i + 1}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    } catch {}
+/* ── Result Actions ────────────────────────────── */
+$('#resultsList').addEventListener('click', async e => {
+  const listingBtn = e.target.closest('.result-card__listing');
+  if (listingBtn) {
+    const scan = scans.find(s => s.id === listingBtn.dataset.id);
+    if (scan?.analysis) copyListing(scan);
+    return;
   }
-  toast('Downloading…');
+
+  const deleteBtn = e.target.closest('.result-card__delete');
+  if (deleteBtn) {
+    if (!currentUser) return;
+    const scanId = deleteBtn.dataset.id;
+    if (!confirm('Delete this result?')) return;
+    await fb.deleteScanDoc(currentUser.uid, scanId).catch(() => {});
+    toast('Deleted');
+  }
+});
+
+function copyListing(scan) {
+  const a = scan.analysis;
+  const lines = [
+    a.title,
+    '',
+    a.description,
+    '',
+    `Condition: ${(a.condition || '').replace(/_/g, ' ')}`,
+    `Category: ${a.category || 'N/A'}`,
+    `Suggested price: $${a.priceLow} \u2013 $${a.priceHigh}`,
+    `Keywords: ${(a.keywords || []).join(', ')}`,
+  ];
+  navigator.clipboard.writeText(lines.join('\n')).then(
+    () => toast('Listing copied!'),
+    () => toast('Could not copy', true)
+  );
 }
 
-function updateActions() {
-  const has = groups.length > 0;
-  selectAllBtn.disabled = !has;
-  deleteBtn.disabled = selectedGroupIds.size === 0;
-  analyzeBtn.disabled = selectedGroupIds.size === 0;
+/* ── Helpers ───────────────────────────────────── */
+function esc(str) {
+  return String(str || '').replace(/[&<>"']/g, m =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[m]
+  );
 }
 
-function updateGroupActions() {
-  const g = getOpenGroup();
-  const ids = g?.imageIds || [];
-  $('#groupSelectAllBtn').disabled = ids.length === 0;
-  $('#groupDeleteBtn').disabled = selectedImageIds.size === 0;
-  $('#groupSplitBtn').disabled = selectedImageIds.size === 0 || selectedImageIds.size === ids.length;
-  $('#groupAnalyzeBtn').disabled = false;
-}
-
-async function render() {
-  await renderCards({ groups, selectedIds: selectedGroupIds });
-  updateActions();
-}
-
-async function renderGroup() {
-  const g = getOpenGroup();
-  if (!g) return;
-  await renderGroupSheet({ group: g, selectedImageIds });
-}
-
-// initial UI state
-setHidden($('#globalProgress'), true);
+/* ── Init ──────────────────────────────────────── */
 setAppVisible(false);
-
+onRoute();

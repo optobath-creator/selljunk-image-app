@@ -7,6 +7,8 @@ Paste each block into the Firebase Console under the corresponding tab.
 ## Firestore Rules
 **Console → Firestore Database → Rules**
 
+The wildcard rule covers both legacy `groups` and new `scans` subcollections.
+
 ```
 rules_version = '2';
 service cloud.firestore {
