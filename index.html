@@ -64,6 +64,14 @@
             <span class="zone__label">Upload Photos</span>
             <span class="zone__hint">Drag and drop images here, or click to select.</span>
           </div>
+
+          <div class="zone zone--folder" id="folderZone" tabindex="0" role="button" aria-label="Upload folder">
+            <svg class="zone__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span class="zone__label">Load Folder</span>
+            <span class="zone__hint">Select a folder to load all images inside it.</span>
+          </div>
         </div>
 
         <!-- Photo Previews -->
@@ -126,6 +134,7 @@
   <!-- Hidden file inputs -->
   <input type="file" id="cameraInput" accept="image/*" capture="environment" hidden />
   <input type="file" id="fileInput" accept="image/*" multiple hidden />
+  <input type="file" id="folderInput" webkitdirectory hidden />
 
   <!-- Toast -->
   <div class="toast" id="toast" aria-live="polite"></div>

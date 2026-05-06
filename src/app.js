@@ -174,6 +174,21 @@ $('#fileInput').onchange = (e) => {
   if (files.length) addPhotos(files);
 };
 
+const folderZone = $('#folderZone');
+folderZone.onclick = () => {
+  if (photos.length >= MAX_PHOTOS) { toast(`Maximum ${MAX_PHOTOS} photos`, true); return; }
+  $('#folderInput').click();
+};
+folderZone.onkeydown = (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); folderZone.click(); }
+};
+$('#folderInput').onchange = (e) => {
+  const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
+  e.target.value = '';
+  if (files.length) addPhotos(files);
+  else toast('No images found in folder', true);
+};
+
 ['dragenter', 'dragover'].forEach(ev =>
   uploadZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); uploadZone.classList.add('dragover'); })
 );

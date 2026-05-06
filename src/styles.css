@@ -143,6 +143,7 @@ body {
 }
 @media (min-width: 640px) {
   .scanner__zones { grid-template-columns: 1fr 1fr; gap: 16px; }
+  .zone--folder { grid-column: 1 / -1; }
 }
 
 .zone {
@@ -182,6 +183,16 @@ body {
   background: rgba(255,255,255,.06);
   border-color: rgba(255,255,255,.22);
 }
+
+.zone--folder {
+  background: rgba(255,255,255,.03);
+  border-color: rgba(255,255,255,.1);
+}
+.zone--folder:hover, .zone--folder:focus {
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.22);
+}
+.zone--folder .zone__icon { color: var(--muted); }
 
 .zone__icon {
   width: 40px;
